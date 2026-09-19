@@ -11,7 +11,10 @@ struct GroupInboxView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      GroupKeyBanner(app: app)
+      // Where this member stands with the group key matters once letters are encrypted. Before the
+      // switch the server reads for everyone, and the key set-up goes on underneath without a word.
+      if app.container.modes.mode == .e2e { GroupKeyBanner(app: app) }
+      MembersWaitingNotice(app: app)
       Picker("Section", selection: $tab) {
         Text("To print").tag(0)
         Text("Conversations").tag(1)
@@ -158,5 +161,33 @@ private struct WritersTab: View {
     }
     .padding(.horizontal, 20).padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+/// Members who have keys of their own and not the group's. In either mode: after the switch they
+/// cannot read the group's letters until someone does this.
+private struct MembersWaitingNotice: View {
+  let app: AppModel
+  @State private var busy = false
+
+  var body: some View {
+    let waiting = app.membersWaiting
+    if !waiting.isEmpty {
+      let names = waiting.map(\.name).formatted(.list(type: .and))
+      VStack(alignment: .leading, spacing: 8) {
+        Text(waiting.count == 1 ? "\(names) is waiting for the group key" : "\(names) are waiting for the group key").font(Theme.titleMedium)
+        Text("Handing it over lets them read and print the group's letters once letters are encrypted. Only do this for people who are really in your group.").font(Theme.bodyMedium)
+        HStack(spacing: 20) {
+          Button(busy ? "Sealing…" : "Hand it over") {
+            Task { busy = true; await app.handKeyToWaitingMembers(); busy = false }
+          }
+          .buttonStyle(.primaryCompact).disabled(busy)
+          Button("Members") { app.push(.groupKey) }.buttonStyle(.link)
+        }
+      }
+      .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+      .background(Theme.redWash, in: RoundedRectangle(cornerRadius: 8))
+      .padding(.horizontal, 20).padding(.vertical, 8)
+    }
   }
 }

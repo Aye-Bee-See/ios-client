@@ -16,15 +16,48 @@ final class SessionFlowTests: XCTestCase {
     app = TestApp { fake.handle($0) }
   }
 
-  func testServerModeSignsInWithoutTouchingKeys() async throws {
+  func testKeysAreMadeAtSignInWhileTheServerIsStillInServerMode() async throws {
+    // API PR #95: the move to end-to-end does not wait for anyone. Keys appear as people sign in.
     fake.mode = "server"
+    fake.messages = [["id": 1, "chat": 7, "user": 4, "sender": "user", "prisoner": 3, "messageText": "An earlier letter."]]
     let session = try await sessions.login(username: " user1 ", password: "pässword1")
     XCTAssertEqual(session.user.username, "user1")
-    XCTAssertEqual(sessions.state.user?.id, 4)
-    XCTAssertFalse(sessions.keysLocked)
-    XCTAssertNil(sessions.pendingRecoveryCode)
-    XCTAssertEqual(app.requests(to: "/auth/keys").count, 0)
     XCTAssertEqual(app.requests(to: "/auth/login").first?.json["username"] as? String, "user1", "the username is trimmed")
+
+    // A server-mode sign-in answer carries no key bundle, so the app asks, finds none, and makes them.
+    XCTAssertEqual(app.requests(to: "/auth/keys").map(\.method), ["GET", "PUT"])
+    let code = try XCTUnwrap(sessions.pendingRecoveryCode, "the recovery code is shown, and cannot be skipped")
+    let k = fake.accounts[0].keys
+    XCTAssertEqual(Set(k.keys), ["publicKey", "wrappedPrivateKey", "kdfSalt", "kdfParams", "recoveryWrappedPrivateKey", "recoverySalt", "recoveryKdfParams"], "the whole bundle in one request")
+    let viaCode = try AccountKeys.unlockWithCode(publicKey: k["publicKey"] as! String, wrapped: k["recoveryWrappedPrivateKey"] as! String, code: code, salt: k["recoverySalt"] as! String, params: .standard)
+    XCTAssertEqual(viaCode.privateKey, app.container.vault.keyPair(for: 4)?.privateKey)
+    XCTAssertFalse(sessions.keysLocked, "nothing is ever locked in server mode: the server still reads for everyone")
+
+    // The next sign-in finds the keys and opens them; no second recovery code.
+    sessions.recoveryCodeSaved()
+    try await sessions.logout()
+    try await sessions.login(username: "user1", password: "pässword1")
+    XCTAssertNil(sessions.pendingRecoveryCode)
+    XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, viaCode.privateKey)
+    XCTAssertEqual(app.requests(to: "/auth/keys", method: "PUT").count, 1)
+  }
+
+  func testAPasswordChangeInServerModeRewrapsTheKeyTooEvenFromAPhoneThatDoesNotHoldIt() async throws {
+    fake.mode = "server"
+    try await sessions.login(username: "user1", password: "pässword1")
+    let key = try XCTUnwrap(app.container.vault.keyPair(for: 4)).privateKey
+    app.container.vault.clear() // a restored phone: signed in, no key here
+    try await sessions.changePassword(current: "pässword1", new: "new-password")
+    let k = fake.accounts[0].keys
+    let reopened = try AccountKeys.unlockWithPassword(publicKey: k["publicKey"] as! String, wrapped: k["wrappedPrivateKey"] as! String, password: "new-password", salt: k["kdfSalt"] as! String, params: .standard)
+    XCTAssertEqual(reopened.privateKey, key, "otherwise the key would stay under the old password and be lost at the switch")
+  }
+
+  func testAnAdminNeverGetsKeys() async throws {
+    fake.accounts.append(FakeAPI.Account(id: 1, username: "admin", password: "abcpassword", role: "admin"))
+    try await sessions.login(username: "admin", password: "abcpassword")
+    XCTAssertEqual(app.requests(to: "/auth/keys").count, 0)
+    XCTAssertNil(sessions.pendingRecoveryCode)
   }
 
   func testAWrongPasswordIsARefusalNotASession() async {

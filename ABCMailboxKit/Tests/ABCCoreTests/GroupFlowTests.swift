@@ -29,16 +29,21 @@ final class GroupFlowTests: XCTestCase {
     switch s { case .notNeeded: "notNeeded"; case .locked: "locked"; case .notSetUp: "notSetUp"; case .notHeld: "notHeld"; case .ready: "ready"; case .failed: "failed" }
   }
 
-  func testAWriterAndAServerModeMemberNeverNeedTheKeyring() async throws {
+  func testAWriterNeverNeedsTheKeyringAndInServerModeReadingNeverWaitsForIt() async throws {
     try await signIn("user1")
     let asWriter = await group.refreshKeyState()
     XCTAssertEqual(stateName(asWriter), "notNeeded")
     try await app.container.sessions.logout()
+
     fake.mode = "server"
     await app.container.modes.refresh()
     try await signIn()
+    let before = app.requests(to: "/auth/keys", method: "GET").count
+    _ = try await group.queue(groupId: 1, status: .queued, page: 1, pageSize: 20)
+    XCTAssertEqual(app.requests(to: "/auth/keys", method: "GET").count, before, "the server reads for everyone; the queue does not ask for keys")
+    // Asked directly (the key set-up after sign-in does), the truth is told in either mode.
     let inServerMode = await group.refreshKeyState()
-    XCTAssertEqual(stateName(inServerMode), "notNeeded")
+    XCTAssertEqual(stateName(inServerMode), "notSetUp")
   }
 
   func testAGroupSetsItsKeyUpOnceHandsItOnAndASecondMemberOpensIt() async throws {

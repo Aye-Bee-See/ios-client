@@ -2,6 +2,18 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-19: the group key is handed over with one confirmation, not silently
+
+**Context.** The API's migration guide (PR #95) has a group member's client do five things after sign-in "without asking". Step 3 is: for every member with keys of their own who does not hold the group key, seal it to them. The guide allows "quietly, or with one confirmation".
+
+**Decision.** Steps 1, 2, 4 and 5 are silent (a toast says what was done). Step 3 is a notice on the Inbox naming who is waiting, with one button.
+
+**Why.** Handing over the group key grants the means to read and print every letter sealed to the group, and who counts as a member is the server's word. A person glancing at two names is a cheap check on that. And the app already has a "Stop" button on the Group key screen that takes a member's copy away; done silently, the next sign-in of any holder would hand it straight back, and the button would be a lie.
+
+**Consequences.** A new member may wait until a holder opens the app and taps once. The switch itself does not wait for them: it needs each relaying group to have a key (step 2), which is silent.
+
+Also decided here: in server mode the group key banner stays hidden and none of this shows unless something was done. Before the switch the server reads for everyone, and "you have not been given the group key" would alarm a volunteer about something that does not affect them yet.
+
 ## 2026-09-19: the outbox sends when iOS allows, and says so
 
 **Context.** Android's outbox hands the job to WorkManager: "when there is a network, even if the app is closed or the phone restarted". iOS has nothing with that guarantee.

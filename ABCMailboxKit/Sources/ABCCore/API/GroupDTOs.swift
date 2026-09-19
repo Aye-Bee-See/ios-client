@@ -95,3 +95,14 @@ struct IssuedTokenDTO: Decodable {
   let token: String?
   let expiresAt: String?
 }
+
+/// End-to-end, API PR #95: a letter this group can open whose writer had no key when it was recorded
+/// (a reply for someone who had not signed in since the switch) and has one now. `wrappedKey` is the
+/// group's own envelope; the member's phone opens it, seals the content key to `publicKey`, and posts it.
+struct MissingEnvelopeDTO: Decodable {
+  let message: Int
+  let readerType: String?
+  let readerId: Int
+  let publicKey: String?
+  let wrappedKey: String?
+}

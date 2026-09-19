@@ -158,7 +158,10 @@ struct LetterCard: View {
         Spacer()
         Tag(text: letter.status.label)
       }
-      if letter.locked {
+      if letter.awaitingShare {
+        // The letter exists and nobody has sealed it to this reader yet. Not an empty letter, and not a lost one.
+        Muted("✉ Your group recorded this letter before your account had its encryption key, so it is not yours to open yet. It opens by itself the next time a member of the group signs in.")
+      } else if letter.locked {
         Muted("🔒 This letter is encrypted and this device does not hold a key that opens it.")
       } else if !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         Text(letter.body).font(Theme.bodyLarge).textSelection(.enabled)
@@ -173,7 +176,7 @@ struct LetterCard: View {
       }
       ForEach(letter.attachments) { a in AttachmentRow(attachment: a) { onOpen(a) } }
       if !statusLine.isEmpty { Muted(statusLine, font: Theme.label) }
-      if letter.canEdit, !letter.locked, mayChange {
+      if letter.canEdit, !letter.locked, !letter.awaitingShare, mayChange {
         HStack(spacing: 20) {
           Button("Edit", action: onEdit).buttonStyle(.quietLink)
           Button("Delete", action: onDelete).buttonStyle(.destructiveLink)

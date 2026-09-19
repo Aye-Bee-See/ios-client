@@ -26,7 +26,7 @@ Requires Xcode 26 (Swift 6 toolchain; the code is in Swift 5 language mode). The
 cd ABCMailboxKit && swift test
 ```
 
-That is the whole test suite: about 130 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
+That is the whole test suite: about 140 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
 
 To run the app, open `ABCMailbox.xcodeproj`, choose the `ABCMailbox` scheme and a simulator, and run. To sign and run on a phone, set your team under Signing & Capabilities.
 
@@ -68,12 +68,17 @@ Pressing Send with no route to the server puts the letter in an outbox, encrypte
 
 When they go out is where iOS is weaker than Android. While the app is open it watches the network and sends the moment there is one; it also sends at launch, on coming to the front, and after sign-in. With the app closed, it asks iOS for a background task that needs a network, and iOS runs that when it chooses, often hours later and never for an app the person has swiped away. The Inbox says so in plain words.
 
+## Keys appear as people sign in
+
+The move to end-to-end encryption does not wait for anyone to be reached (API pull request #95). After every sign-in, in either mode and without asking, the app makes the account's keys if it has none (the recovery code is shown once and cannot be skipped), and re-wraps them on a password change. For a group member it then makes the group's key if the group has none, gives keys to unclaimed writers who have none (never to the group's shared anonymous account), and, after the switch, shares replies with writers who had no keys when the reply was recorded. One step is left to a person: handing the group key to a member who lacks it is offered on the Inbox with one confirmation (`docs/DECISIONS.md` says why). A letter nobody has sealed to its writer yet says so, rather than showing as empty or locked.
+
+This is the full list from the API's migration guide. Android, as of `cbf93c3`, does only the last two items, so here iOS is ahead of it.
+
 ## Behind Android
 
 As of Android commit `cbf93c3`, not yet in this app:
 
 - **Spanish and Russian** (Android phase 9). Every string here is English, in the Swift source.
-- **Key set-up at sign-in in both modes** (API pull request #95): making keys while the server is still in server mode, setting up the group key and handing it to waiting members without being asked, giving keys to writers who have none, and sealing missing envelopes (`GET /messaging/envelopes/missing`). This app makes keys at sign-in only when the server is already end-to-end, and the group steps are manual (Inbox, Members).
 - **Push notifications and the notification feed** (API pull request #96). iPhones are reached through Firebase, so this needs a Firebase project with this app added to it (`GoogleService-Info.plist`), an APNs key from a paid Apple developer account uploaded there, the Push Notifications capability, and a notification service extension to replace the server's bland alert with wording made on the phone. The feed (`GET /auth/notifications`) needs none of that and could be built first.
 - An accessibility pass (Android phase 7c). Fields and buttons are labelled for VoiceOver, but nothing has been listened to.
 

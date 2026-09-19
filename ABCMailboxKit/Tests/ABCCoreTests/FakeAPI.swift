@@ -17,6 +17,8 @@ final class FakeAPI: @unchecked Sendable {
     var orgWrappedPrivateKey: String? // custody copy, while unclaimed
     var claim: [String: Any]? // tokenHash, claimWrappedPrivateKey, claimSalt, claimKdfParams
     var name: String?
+    /// The group's shared anonymous writer: not a person, and never has keys.
+    var anonymousFor: Int?
   }
 
   private let lock = NSLock()
@@ -136,8 +138,14 @@ final class FakeAPI: @unchecked Sendable {
     case ("PUT", "/auth/keys"):
       guard let a = caller(r), let i = index(a.id) else { return .error(401, info: "Sign in.") }
       if accounts[i].keys["publicKey"] != nil, body["publicKey"] != nil { return .error(409, info: "The public key is already set.") }
+      // The first public key must come with its wrapped private half, or letters sealed to it could never be opened (PR #95).
+      if accounts[i].keys["publicKey"] == nil, body["publicKey"] != nil, body["wrappedPrivateKey"] == nil || body["kdfSalt"] == nil || body["kdfParams"] == nil {
+        return .error(400, extra: ["errors": ["publicKey must come with wrappedPrivateKey, kdfSalt and kdfParams."]])
+      }
+      let first = accounts[i].keys["publicKey"] == nil && body["publicKey"] != nil
       accounts[i].keys.merge(body) { $1 }
-      return .data([:])
+      let mine = messages.filter { $0["user"] as? Int == a.id }.count
+      return .data(first ? ["caughtUp": ["letters": mine, "sealed": mine, "dropped": 0]] : [:])
 
     case ("GET", "/auth/public-key"):
       if let user = r.query["user"].flatMap(Int.init) { return .data(["user": user, "publicKey": accounts.first { $0.id == user }?.keys["publicKey"] ?? NSNull()]) }
@@ -152,6 +160,8 @@ final class FakeAPI: @unchecked Sendable {
         tokens = tokens.filter { $0.value != target }
         return .data(["token": issue(accounts[i])])
       }
+      if body["publicKey"] != nil, accounts[i].anonymousFor != nil { return .error(409, info: "A group's anonymous account never has keys.") }
+      if body["publicKey"] != nil, body["orgWrappedPrivateKey"] == nil || body["orgKeyVersion"] == nil { return .error(400, extra: ["errors": ["publicKey must come with orgWrappedPrivateKey and orgKeyVersion."]]) }
       if let publicKey = body["publicKey"] as? String, accounts[i].managedBy == a.chapterId {
         accounts[i].keys["publicKey"] = publicKey
         accounts[i].orgWrappedPrivateKey = body["orgWrappedPrivateKey"] as? String
@@ -196,7 +206,7 @@ final class FakeAPI: @unchecked Sendable {
     case ("GET", "/auth/writers"):
       guard let a = caller(r) else { return .error(401, info: "Sign in.") }
       return .data(accounts.filter { $0.managedBy != nil && $0.managedBy == a.chapterId }.map { w -> [String: Any] in
-        ["id": w.id, "name": w.name ?? w.username, "username": w.username, "email": "w\(w.id)@managed.example", "managedBy": w.managedBy!, "publicKey": w.keys["publicKey"] ?? NSNull(), "orgWrappedPrivateKey": w.orgWrappedPrivateKey ?? NSNull(), "claimToken": w.claim.map { _ in ["expiresAt": "2099-01-01T00:00:00.000Z"] } ?? NSNull()]
+        ["id": w.id, "name": w.name ?? w.username, "username": w.username, "email": "w\(w.id)@managed.example", "managedBy": w.managedBy!, "anonymousForChapter": w.anonymousFor ?? NSNull(), "publicKey": w.keys["publicKey"] ?? NSNull(), "orgWrappedPrivateKey": w.orgWrappedPrivateKey ?? NSNull(), "claimToken": w.claim.map { _ in ["expiresAt": "2099-01-01T00:00:00.000Z"] } ?? NSNull()]
       })
 
     case ("POST", "/auth/writer"):
@@ -248,6 +258,10 @@ final class FakeAPI: @unchecked Sendable {
       for e in body["envelopes"] as? [[String: Any]] ?? [] where e["readerType"] as? String == "chapter" {
         if e["keyVersion"] as? Int != groupKeys[e["readerId"] as? Int ?? 0]?.version { return .error(409, info: "Error sending.", extra: ["name": "KeyVersionError", "error": "That group rotated its key."]) }
       }
+      // An envelope for a writer without a public key is a 400 (PR #95).
+      for e in body["envelopes"] as? [[String: Any]] ?? [] where e["readerType"] as? String == "user" {
+        if accounts.first(where: { $0.id == e["readerId"] as? Int })?.keys["publicKey"] == nil { return .error(400, extra: ["errors": ["That writer has no public key."]]) }
+      }
       var m = body
       m["id"] = id(); m["chat"] = 7; m["status"] = body["sender"] as? String == "prisoner" ? "received" : "queued"
       m["user"] = body["user"] ?? a.id; m["createdAt"] = "2026-09-19T10:00:00.000Z"; m["keep"] = false
@@ -282,7 +296,19 @@ final class FakeAPI: @unchecked Sendable {
       messages[i]["status"] = to
       return .data(visible(messages[i], to: a))
 
+    case ("GET", "/messaging/envelopes/missing"):
+      guard let a = caller(r), let g = a.chapterId, mode == "e2e" else { return .error(403, info: "Group members, end-to-end mode.") }
+      let rows: [[String: Any]] = messages.compactMap { m in
+        let envelopes = m["envelopes"] as? [[String: Any]] ?? []
+        guard let groups = envelopes.first(where: { $0["readerType"] as? String == "chapter" && $0["readerId"] as? Int == g }),
+              let writer = accounts.first(where: { $0.id == m["user"] as? Int }), let publicKey = writer.keys["publicKey"],
+              !envelopes.contains(where: { $0["readerType"] as? String == "user" && $0["readerId"] as? Int == writer.id }) else { return nil }
+        return ["message": m["id"]!, "chat": m["chat"]!, "readerType": "user", "readerId": writer.id, "publicKey": publicKey, "wrappedKey": groups["wrappedKey"]!, "keyVersion": groups["keyVersion"] ?? NSNull()]
+      }
+      return .data(rows)
+
     case ("POST", "/messaging/envelope"):
+      if mode != "e2e" { return .error(409, info: "Server mode has no envelopes to add.") }
       guard let i = messages.firstIndex(where: { $0["id"] as? Int == body["message"] as? Int }) else { return .error(404, info: "No such letter.") }
       messages[i]["envelopes"] = (messages[i]["envelopes"] as? [[String: Any]] ?? []) + [body.filter { $0.key != "message" }]
       return .data([:])

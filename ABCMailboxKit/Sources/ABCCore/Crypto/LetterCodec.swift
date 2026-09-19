@@ -69,7 +69,7 @@ final class LetterCodec {
   /// Call before decoding anything. For a group member on an end-to-end server it
   /// loads the group key and the custody keys once, so `incoming` and `preview`
   /// can stay plain functions; for everyone else it returns at once.
-  func ready() async { if viewer?.isStaff == true { await keyring.load() } }
+  func ready() async { if viewer?.isStaff == true, await isEndToEnd() { await keyring.load() } }
 
   /// After a 409 KeyVersionError: some group rotated its key, possibly ours, so open it again before re-sealing.
   func refreshKeys() async { if viewer?.isStaff == true { await keyring.load(force: true) } }
@@ -95,15 +95,19 @@ final class LetterCodec {
       // A group member writes as the group: anonymously, for a writer it manages, or recording a reply.
       let group = try Self.key(from: await keyring.load())
       if let writerId = letter.asWriterId {
-        guard let writerKey = try await publicKey(user: writerId).key else {
-          throw AppError.validation(["This writer has no encryption key yet, so nothing can be sealed to them. They get one the first time they sign in."])
+        if let writerKey = try await publicKey(user: writerId).key {
+          readers.append(Reader(type: Reader.user, id: writerId, publicKey: writerKey))
+        } else if !letter.fromPrisoner {
+          // A letter written *for* someone is theirs, and needs their key.
+          throw Self.writerHasNoKey
         }
-        readers.append(Reader(type: Reader.user, id: writerId, publicKey: writerKey))
+        // A reply may be recorded for a writer who has no key yet (API PR #95): it is sealed to the group
+        // alone, and a member's phone adds the writer's envelope once they have a key (`GroupRepository.setUpKeys`).
       }
       // The group keeps its own envelope wherever the server permits one: as the manager of the writer
       // (which includes its anonymous writer), or as a relay group of the facility.
       let managesWriter = letter.asWriterId.map { keyring.writerKey($0) != nil } ?? true
-      if managesWriter || letter.groupRelaysFacility || letter.relayChapter == group.groupId {
+      if managesWriter || letter.groupRelaysFacility || letter.relayChapter == group.groupId || readers.isEmpty {
         readers.append(Reader(type: Reader.chapter, id: group.groupId, publicKey: group.publicKey, keyVersion: group.version))
       }
     } else {
@@ -151,7 +155,8 @@ final class LetterCodec {
     var letter = dto.toDomain()
     guard let ciphertext = dto.ciphertext, let nonce = dto.nonce else { return letter }
     guard let key = contentKey(dto), let body = try? LetterCipher.decryptText(ciphertext: ciphertext, nonce: nonce, contentKey: key) else {
-      letter.locked = true
+      // No envelope at all is "not shared with you yet"; an envelope this phone cannot open is "locked".
+      if dto.envelopes?.isEmpty ?? true, viewer?.isStaff == false { letter.awaitingShare = true } else { letter.locked = true }
       return letter
     }
     letter.body = body
@@ -208,6 +213,8 @@ final class LetterCodec {
     let sealed = try Self.sealing { try LetterCipher.seal(contentKey: key, to: Reader(type: Reader.chapter, id: groupId, publicKey: partnerKey, keyVersion: partner.version)) }
     return EnvelopeDTO(readerType: sealed.readerType, readerId: sealed.readerId, wrappedKey: sealed.wrappedKey, keyVersion: sealed.keyVersion)
   }
+
+  static let writerHasNoKey = AppError.validation(["This writer has no encryption key yet, so nothing can be sealed to them. They get one the first time they sign in."])
 
   /// The opened group key, or a sentence for the reason a group member cannot use it yet.
   static func key(from state: GroupKeyState) throws -> GroupKey {

@@ -36,7 +36,9 @@ struct RootView: View {
       if old != nil, old != new { app.closeEverything() }
       // Letters belong to the account that wrote them: show this account's, and send them now that someone is signed in.
       Task { await app.flushOutbox() }
+      Task { await app.setUpKeys() }
     }
+    .task { await app.setUpKeys() } // at launch, for someone already signed in
   }
 
   private func tab<Content: View>(_ tab: AppTab, _ title: String, _ symbol: String, path: Binding<[Route]>, @ViewBuilder root: @escaping () -> Content) -> some View {

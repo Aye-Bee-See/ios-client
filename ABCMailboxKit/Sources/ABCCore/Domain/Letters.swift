@@ -60,6 +60,10 @@ public struct Letter: Equatable, Identifiable, Sendable {
   public var attachments: [Attachment]
   /// End-to-end mode: true when this device holds no key that opens the letter.
   public var locked: Bool = false
+  /// End-to-end mode: the letter exists but nobody has sealed it to this reader yet (`envelopes: []`). For a
+  /// writer it is a reply recorded while they had no keys; a member of their group adds their envelope the
+  /// next time one signs in (API PR #95). Not an empty letter, and not a lost one.
+  public var awaitingShare: Bool = false
 
   /// The brief's rule: a writer may edit or delete only while the letter is queued.
   public var canEdit: Bool { !fromPrisoner && status == .queued }

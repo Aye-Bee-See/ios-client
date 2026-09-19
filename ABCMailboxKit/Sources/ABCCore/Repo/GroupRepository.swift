@@ -29,7 +29,7 @@ public final class GroupRepository {
 
   /// The opened group key, or the reason it is not available as an error a screen can show.
   private func groupKey(force: Bool = false) async throws -> GroupKey {
-    switch await keyring.load(force: force) {
+    switch await keyring.load(force: force, anyMode: true) {
     case .notSetUp: throw AppError.forbidden("Your group has not set up its encryption key yet. Do that first, from the Inbox.")
     case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask a member who holds it to hand it to you.")
     case let state: return try LetterCodec.key(from: state)
@@ -84,7 +84,10 @@ public final class GroupRepository {
     var request = AddWriterRequest(name: name.trimmed, email: email?.trimmed.nonBlank, managerNote: note?.trimmed.nonBlank)
     guard await codec.isEndToEnd() else {
       let envelope: APIEnvelope<WriterDTO> = try await api.send("POST", "auth/writer", body: request)
-      return try envelope.required("writer").toDomain()
+      let writer = try envelope.required("writer")
+      // Server mode, before the switch: the writer gets a keypair all the same, if this member can make one.
+      if case .ready(let group) = await keyring.load(anyMode: true) { _ = try? await giveKeys(to: writer.id, group: group) }
+      return writer.toDomain()
     }
     // End-to-end: the writer's keypair is made here and the private half sealed to the group (custody),
     // so the group can write and read for them until they claim the account. A 409 means the group key
@@ -136,6 +139,12 @@ public final class GroupRepository {
       keyring.remember(writerId: writerId, keyPair: opened)
       return opened
     }
+    return try await giveKeys(to: writerId, group: group)
+  }
+
+  /// A keypair for an unclaimed writer who has none, private half sealed to the group. The API allows it once,
+  /// and wants all three fields together: a public key whose private half nobody holds could never be opened.
+  private func giveKeys(to writerId: Int, group: GroupKey) async throws -> Sodium.KeyPair {
     let made = try LetterCodec.sealing { try GroupKeys.createSealed(to: group.publicKey) }
     try await api.send("PUT", "auth/user", body: UpdateUserRequest(id: writerId, publicKey: made.publicKey, orgWrappedPrivateKey: made.sealedPrivateKey, orgKeyVersion: group.version))
     keyring.remember(writerId: writerId, keyPair: made.keyPair)
@@ -146,13 +155,68 @@ public final class GroupRepository {
     try await api.send("DELETE", "auth/writer/token", body: WriterRef(writer: writerId))
   }
 
-  // MARK: - End-to-end mode only
+  // MARK: - Key set-up after sign-in (API PR #95)
+
+  /// What `setUpKeys` did and found. Everything is zero or empty for a writer's account.
+  public struct KeySetUp: Equatable, Sendable {
+    /// This phone made the group's keypair just now.
+    public var madeGroupKey = false
+    public var writersGivenKeys = 0
+    /// Letters whose writer has keys by now and was given their envelope.
+    public var lettersShared = 0
+    /// Members with keys of their own who do not hold the group key. Handing it over is the one step
+    /// that waits for a person: see `docs/DECISIONS.md`.
+    public var membersWaiting: [GroupMember] = []
+  }
+
+  /// A group member's share of the move to end-to-end encryption, done without being asked after every
+  /// sign-in and launch, in either mode (the key endpoints work before the switch, and that is the point:
+  /// the switch waits only for every relaying group to have its key). Best effort throughout; whatever
+  /// fails is tried again next time.
+  ///
+  /// 2. The group has no key: make one. 4. Unclaimed writers with no keys: make them, sealed to the group.
+  /// 5. End-to-end only: letters the group can open whose writer has keys by now and no envelope: seal
+  /// the content key to them. (1 is the member's own keys, made at sign-in by `SessionRepository`;
+  /// 3, handing the group key to members who lack it, is reported here and done by a person.)
+  public func setUpKeys() async -> KeySetUp {
+    var done = KeySetUp()
+    guard let me = viewer, me.role == Role.chapter, me.chapterId != nil else { return done }
+    var state = await keyring.load(force: true, anyMode: true)
+    if case .notSetUp = state, (try? await setUpGroupKey()) != nil {
+      state = keyring.state
+      done.madeGroupKey = state.isReady
+    }
+    guard case .ready(let group) = state else { return done }
+
+    // 4. The group's shared anonymous account is not a person and never has keys.
+    for writer in (try? await writerRows()) ?? [] where writer.publicKey == nil && writer.anonymousForChapter == nil {
+      if (try? await giveKeys(to: writer.id, group: group)) != nil { done.writersGivenKeys += 1 }
+    }
+
+    // 5.
+    if await codec.isEndToEnd(), let waiting = (try? await api.get("messaging/envelopes/missing") as APIEnvelope<[MissingEnvelopeDTO]>)?.data {
+      for w in waiting {
+        guard let theirKey = w.publicKey, let sealedToGroup = w.wrappedKey,
+              let contentKey = try? LetterCipher.openEnvelope(sealedToGroup, keyPair: group.keyPair),
+              let sealed = try? LetterCipher.seal(contentKey: contentKey, to: Reader(type: w.readerType ?? Reader.user, id: w.readerId, publicKey: theirKey))
+        else { continue }
+        let request = AddEnvelopeRequest(message: w.message, readerType: sealed.readerType, readerId: sealed.readerId, wrappedKey: sealed.wrappedKey, keyVersion: nil)
+        if (try? await api.send("POST", "messaging/envelope", body: request)) != nil { done.lettersShared += 1 }
+      }
+    }
+
+    // 3.
+    done.membersWaiting = ((try? await members()) ?? []).filter { $0.hasOwnKey && !$0.holdsGroupKey && !$0.isMe }
+    return done
+  }
+
+  // MARK: - The group's own key
 
   /// Where this member stands with the group key. Always `notNeeded` in server mode.
   public var keyState: GroupKeyState { keyring.state }
 
   @discardableResult
-  public func refreshKeyState() async -> GroupKeyState { await keyring.load(force: true) }
+  public func refreshKeyState() async -> GroupKeyState { await keyring.load(force: true, anyMode: true) }
 
   /// Makes the group's keypair on this device, once, and seals the private half to this member.
   public func setUpGroupKey() async throws {
@@ -165,10 +229,10 @@ public final class GroupRepository {
     do {
       try await api.send("PUT", "auth/chapter-keys", body: GroupKeyRequest(chapter: groupId, publicKey: made.publicKey, wrappedOrgPrivateKey: made.sealedPrivateKey))
     } catch {
-      await keyring.load(force: true)
+      await keyring.load(force: true, anyMode: true)
       throw error
     }
-    await keyring.load(force: true)
+    await keyring.load(force: true, anyMode: true)
   }
 
   private func memberRows(groupId: Int) async throws -> [MemberDTO] {

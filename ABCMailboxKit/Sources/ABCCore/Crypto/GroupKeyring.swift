@@ -83,21 +83,25 @@ public final class GroupKeyring {
 
   /// Loads if needed. Cheap when already loaded, and a no-op for writers and in server mode.
   /// Calls never overlap: a second caller waits for the first and, unless it insists, takes its answer.
+  ///
+  /// `anyMode`: the key set-up after sign-in (API PR #95) opens the group key while the server is
+  /// still in server mode. Reading letters never needs it there, so nothing else asks.
   @discardableResult
-  public func load(force: Bool = false) async -> GroupKeyState {
+  public func load(force: Bool = false, anyMode: Bool = false) async -> GroupKeyState {
     if let inFlight {
       let answer = await inFlight.value
       if !force { return answer }
     }
-    let task = Task { await self.reallyLoad(force: force) }
+    let task = Task { await self.reallyLoad(force: force, anyMode: anyMode) }
     inFlight = task
     let answer = await task.value
     if inFlight == task { inFlight = nil }
     return answer
   }
 
-  private func reallyLoad(force: Bool) async -> GroupKeyState {
-    guard let me = member, await modes.current() == .e2e else {
+  private func reallyLoad(force: Bool, anyMode: Bool) async -> GroupKeyState {
+    let mode = await modes.current()
+    guard let me = member, mode == .e2e || anyMode else {
       if loadedFor != nil { forget() }
       return .notNeeded
     }

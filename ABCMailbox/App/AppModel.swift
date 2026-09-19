@@ -67,6 +67,9 @@ final class AppModel {
   var authPresented = false
   var authPath: [AuthRoute] = []
 
+  /// Group members with keys of their own who are waiting to be handed the group's (API PR #95, step 3).
+  private(set) var membersWaiting: [GroupMember] = []
+
   private(set) var toast: Toast?
   @ObservationIgnored private var toastTask: Task<Void, Never>?
 
@@ -128,6 +131,32 @@ final class AppModel {
     authPath = []
     if goToInbox { tab = .inbox }
     if let message { show(message) }
+  }
+
+  // MARK: Key set-up (API PR #95)
+
+  /// A group member's share of the move to end-to-end encryption, after every sign-in and launch,
+  /// without asking. The one thing left to a person is handing the group key to a member who lacks it.
+  func setUpKeys() async {
+    guard user?.role == Role.chapter else { membersWaiting = []; return }
+    let done = await container.group.setUpKeys()
+    membersWaiting = done.membersWaiting
+    var said: [String] = []
+    if done.madeGroupKey { said.append("Your group's encryption key was made on this phone.") }
+    if done.writersGivenKeys > 0 { said.append(done.writersGivenKeys == 1 ? "A writer in your care was given keys." : "\(done.writersGivenKeys) writers in your care were given keys.") }
+    if done.lettersShared > 0 { said.append(done.lettersShared == 1 ? "A reply was shared with its writer." : "\(done.lettersShared) replies were shared with their writers.") }
+    if !said.isEmpty { show(said.joined(separator: " ")) }
+  }
+
+  /// One confirmation, as the API's guide allows, rather than silently: it grants someone the means to
+  /// read the group's mail, and doing it unasked would quietly undo "Stop" on the Group key screen.
+  func handKeyToWaitingMembers() async {
+    var failed: String?
+    for member in membersWaiting {
+      do { try await container.group.handKey(to: member.id) } catch { failed = AppError.from(error).userMessage ?? "The key could not be handed over." }
+    }
+    await setUpKeys()
+    show(failed ?? "Done. They can read the group's letters from their next sign-in or refresh.")
   }
 
   // MARK: The outbox

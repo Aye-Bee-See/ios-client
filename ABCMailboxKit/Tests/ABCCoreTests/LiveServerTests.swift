@@ -21,7 +21,7 @@ final class LiveServerTests: XCTestCase {
     return AppContainer(defaultBaseURL: url, secrets: InMemorySecretStore(), defaults: defaults, files: LocalFiles(root: scratch), draftsDirectory: scratch.appendingPathComponent("drafts"), offlineDirectory: scratch.appendingPathComponent("offline"), outboxDirectory: scratch.appendingPathComponent("outbox"))
   }
 
-  func testServerModeTheDirectoryAWriterAndAGroupMember() async throws {
+  func testServerModeThePublicDirectoryAndTheOfflineCopy() async throws {
     let app = try container("ABC_LIVE_SERVER")
     let mode = await app.modes.refresh()
     XCTAssertEqual(mode, .server)
@@ -43,8 +43,17 @@ final class LiveServerTests: XCTestCase {
     print("live: offline copy holds \(app.offline.counts)")
     XCTAssertEqual(app.offline.counts.prisoners, page.total, "signed out, the copy and the public list agree")
 
+  }
+
+  func testServerModeAWriterAndAGroupMember() async throws {
+    let app = try container("ABC_LIVE_SERVER")
+    await app.modes.refresh()
+    let writerPassword = env("ABC_LIVE_WRITER_PASSWORD") ?? "password1"
+    try await skipUnlessKeysExist("user1", writerPassword, on: "ABC_LIVE_SERVER")
+    try await skipUnlessKeysExist("member1", "password1", on: "ABC_LIVE_SERVER")
+
     // A writer.
-    try await app.sessions.login(username: "user1", password: env("ABC_LIVE_WRITER_PASSWORD") ?? "password1")
+    try await app.sessions.login(username: "user1", password: writerPassword)
     XCTAssertFalse(app.sessions.keysLocked)
     let threads = try await app.letters.threads(page: 1, pageSize: 20)
     let thread = try await app.letters.thread(chatId: try XCTUnwrap(threads.items.first?.id, "user1 has a thread on a seeded database"))
@@ -67,15 +76,23 @@ final class LiveServerTests: XCTestCase {
     XCTAssertFalse(app.sessions.state.isSignedIn)
   }
 
-  /// Signing in to an account with no keys would create them, which is a write; look before leaping.
-  private func skipUnlessKeysExist(_ username: String, _ password: String) async throws {
-    let base = URL(string: DevServerRepository.normalise(try XCTUnwrap(env("ABC_LIVE_E2E")))!)!
-    let peek = APIClient(baseURL: DevServerURL(defaultURL: base), cache: SessionCache())
+  /// Signing in to an account with no keys creates them (API PR #95), which is a write; look before leaping.
+  /// A server-mode sign-in answer carries no key bundle, so there the bundle is asked for with the token.
+  private func skipUnlessKeysExist(_ username: String, _ password: String, on variable: String = "ABC_LIVE_E2E") async throws {
+    let base = URL(string: DevServerRepository.normalise(try XCTUnwrap(env(variable)))!)!
+    let cache = SessionCache()
+    let peek = APIClient(baseURL: DevServerURL(defaultURL: base), cache: cache)
     let login: APIEnvelope<LoginData>
     do { login = try await peek.send("POST", "auth/login", body: LoginRequest(username: username, password: password)) } catch {
-      throw XCTSkip("cannot sign in to the e2e server as \(username) (\(AppError.from(error).readable)). One attempt only: wrong sign-ins lock the account.")
+      throw XCTSkip("cannot sign in to \(base) as \(username) (\(AppError.from(error).readable)). One attempt only: wrong sign-ins lock the account.")
     }
-    guard login.data?.keys?.material != nil else { throw XCTSkip("\(username) has no keys on this server yet; signing in would create them, and this test only reads") }
+    var bundle = login.data?.keys
+    if bundle == nil {
+      cache.token = login.data?.token.token
+      bundle = (try? await peek.get("auth/keys") as APIEnvelope<KeyBundleDTO>)?.data
+      try? await peek.send("POST", "auth/logout", body: LogoutRequest(everywhere: false))
+    }
+    guard bundle?.material != nil else { throw XCTSkip("\(username) has no keys on \(base) yet; signing in with this app would create them, and this test only reads") }
   }
 
   /// Set ABC_LIVE_WRITER_PASSWORD if a recovery test changed user1's password on the e2e server.

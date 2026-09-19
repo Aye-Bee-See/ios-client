@@ -82,19 +82,28 @@ public final class SessionRepository {
     // A different account signing in over a live one must not inherit its keys.
     if let current = state.user, current.id != session.user.id { forgetLocally() }
     adopt(session)
-    if await modes.current() == .e2e { await prepareKeys(session, bundle: response.keys, password: password) }
+    _ = await modes.current()
+    await prepareKeys(session, bundle: response.keys, password: password)
     return session
   }
 
-  /// End-to-end mode, right after signing in. An account that has keys gets them
-  /// unwrapped with the password just typed. An account that has none (made
-  /// before the switch, or by an admin) gets a keypair now: generated here,
-  /// wrapped under the password and a new recovery code, and uploaded. The
-  /// recovery code is then shown once. A failure leaves the account signed in
-  /// but locked, and the inbox offers to unlock.
+  /// Right after signing in, in either mode (API PR #95). Keys can only be made at sign-in: the
+  /// private key is wrapped under the password, and this is the one moment the app holds it. So the
+  /// move to end-to-end encryption does not depend on reaching every person: it happens as they
+  /// sign in, while the server is still in server mode, where the key endpoints already work.
+  ///
+  /// An account that has keys gets them unwrapped with the password just typed. An account that
+  /// has none gets a keypair now: generated here, wrapped under the password and a new recovery
+  /// code, and uploaded whole (the server seals the person's existing letters to them on the spot).
+  /// The recovery code is then shown once and cannot be skipped. Admins never have keys. A failure
+  /// leaves the account signed in; on an end-to-end server it is locked, and the inbox offers to unlock.
   private func prepareKeys(_ session: Session, bundle: KeyBundleDTO?, password: String) async {
     let userId = session.user.id
+    guard session.user.role != Role.admin else { return }
     do {
+      // An end-to-end server sends the bundle with the sign-in answer; a server-mode one is asked.
+      var bundle = bundle
+      if bundle == nil { bundle = (try await api.get("auth/keys") as APIEnvelope<KeyBundleDTO>).data }
       if let m = bundle?.material {
         vault.put(userId: userId, keyPair: try await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: password, salt: m.salt, params: m.params))
       } else {
@@ -162,11 +171,20 @@ public final class SessionRepository {
       throw AppError.validation(["Your current password is incorrect."])
     }
     var request = UpdateUserRequest(id: session.user.id, password: new)
-    if await modes.current() == .e2e {
-      // The private key is wrapped under the password, so a new password means a new wrapping.
-      guard let keyPair = vault.keyPair(for: session.user.id) else { throw AppError.lettersLocked }
+    // The private key is wrapped under the password, so a new password means a new wrapping: in either
+    // mode, now that accounts have keys before the switch. Changing the password without it would leave
+    // the key under the old one. If this phone does not hold the key, the current password (just proven
+    // right) opens the server's copy.
+    var keyPair = vault.keyPair(for: session.user.id)
+    if keyPair == nil, let m = (try? await api.get("auth/keys") as APIEnvelope<KeyBundleDTO>)?.data?.material {
+      keyPair = try? await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: current, salt: m.salt, params: m.params)
+      if let keyPair { vault.put(userId: session.user.id, keyPair: keyPair) }
+    }
+    if let keyPair {
       let w = try await wrapped(keyPair, under: new)
       request.wrappedPrivateKey = w.wrapped; request.kdfSalt = w.salt; request.kdfParams = w.params
+    } else if await modes.current() == .e2e {
+      throw AppError.lettersLocked
     }
     let envelope: APIEnvelope<UpdateUserData> = try await api.send("PUT", "auth/user", body: request)
     // Every older token (including the one just used) is dead now; keep this device signed in.
