@@ -123,7 +123,7 @@ struct TestApp {
     container = AppContainer(
       defaultBaseURL: URL(string: "http://api.test/")!, secrets: secrets, defaults: defaults, configuration: configuration,
       files: LocalFiles(root: scratch.appendingPathComponent("caches")), draftsDirectory: scratch.appendingPathComponent("drafts"),
-      offlineDirectory: scratch.appendingPathComponent("offline")
+      offlineDirectory: scratch.appendingPathComponent("offline"), outboxDirectory: scratch.appendingPathComponent("outbox")
     )
     serverId = id
     self.secrets = secrets

@@ -28,7 +28,14 @@
 	<string>Developer builds can talk to an API running on a computer on the same Wi-Fi.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo of a handwritten letter, or of a prisoner's reply, to attach it.</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<!-- Letters written offline are sent when iOS next lets the app work in the background. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>me.paxana.abcmailbox.outbox</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>

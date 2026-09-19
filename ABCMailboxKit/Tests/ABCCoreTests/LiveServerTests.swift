@@ -18,7 +18,7 @@ final class LiveServerTests: XCTestCase {
     let suite = "abc-live-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
-    return AppContainer(defaultBaseURL: url, secrets: InMemorySecretStore(), defaults: defaults, files: LocalFiles(root: scratch), draftsDirectory: scratch.appendingPathComponent("drafts"), offlineDirectory: scratch.appendingPathComponent("offline"))
+    return AppContainer(defaultBaseURL: url, secrets: InMemorySecretStore(), defaults: defaults, files: LocalFiles(root: scratch), draftsDirectory: scratch.appendingPathComponent("drafts"), offlineDirectory: scratch.appendingPathComponent("offline"), outboxDirectory: scratch.appendingPathComponent("outbox"))
   }
 
   func testServerModeTheDirectoryAWriterAndAGroupMember() async throws {

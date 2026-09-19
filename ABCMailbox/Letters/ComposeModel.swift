@@ -31,6 +31,9 @@ final class ComposeModel {
   @ObservationIgnored private let app: AppModel
   @ObservationIgnored private var autosave: Task<Void, Never>?
   @ObservationIgnored private var sent = false
+  /// One key per letter, repeated if this screen tries twice and carried into the outbox if it gives up
+  /// (API PR #97). A changed letter is a different letter, so editing the text makes a new key.
+  @ObservationIgnored private var sendKey: (key: String, body: String)?
 
   init(app: AppModel, request: ComposeRequest) {
     self.app = app
@@ -53,7 +56,7 @@ final class ComposeModel {
     return isStaff && !editing ? "Anonymous writer" : nil
   }
   // Drafts belong to a writer's own letters; a group's letters for others are not drafted on this phone.
-  private var usesDrafts: Bool { !editing && request.writerId == nil && !recordingReply && !isStaff }
+  private var usesDrafts: Bool { !editing && request.writerId == nil && !recordingReply && request.outboxId == nil && !isStaff }
 
   var title: String { recordingReply ? "Record a reply" : editing ? "Edit letter" : "New letter" }
   var sendLabel: String { progress ?? (recordingReply ? "Save reply" : editing ? "Save changes" : "Send letter") }
@@ -91,6 +94,12 @@ final class ComposeModel {
       if let letter = try? await app.container.letters.letter(messageId: editId) {
         body = letter.body; note = letter.relayNote ?? ""; selected = letter.relayGroupId ?? selected
       }
+    } else if let outboxId = request.outboxId, let queued = app.container.outbox.open(outboxId) {
+      body = queued.payload.body; note = queued.payload.relayNote ?? ""; selected = queued.payload.relayChapter ?? selected
+      attachments = queued.files
+      // Unchanged, it is still the same letter: an earlier attempt may have arrived unheard, and only the
+      // same key lets the server say so. Edited, it is a different letter and gets a new key.
+      sendKey = (queued.payload.idempotencyKey, body)
     } else if usesDrafts, let userId, let draft = app.container.drafts.load(userId: userId, prisonerId: request.prisonerId) {
       body = draft.body; note = draft.note ?? ""; selected = draft.relayChapter ?? selected; restored = true
     }
@@ -186,18 +195,46 @@ final class ComposeModel {
           prisonerId: request.prisonerId, body: body, relayNote: relayNote, relayChapter: relayChapter,
           asWriterId: request.replyForUserId ?? request.writerId, fromPrisoner: recordingReply,
           // End-to-end: the server lets a group hold an envelope where it relays for the facility (or manages the writer).
-          groupRelaysFacility: staffGroupId.map { id in facility?.relayGroups.contains { $0.id == id } == true } ?? false
+          groupRelaysFacility: staffGroupId.map { id in facility?.relayGroups.contains { $0.id == id } == true } ?? false,
+          idempotencyKey: keyForThisLetter()
         )
-        let created = try await letters.send(letter)
-        sent = true
-        autosave?.cancel()
-        if usesDrafts, let userId { app.container.drafts.delete(userId: userId, prisonerId: request.prisonerId) }
-        await uploadThen(messageId: created.id, chatId: created.threadId)
+        do {
+          let created = try await letters.send(letter)
+          finished()
+          await uploadThen(messageId: created.id, chatId: created.threadId)
+        } catch let e as AppError where e.meansNotReachingOurServer {
+          // No answer is not a reason to lose the evening's letter: it goes to the outbox and is sent when the
+          // phone is next online. "No answer" includes a timeout, where the letter may in fact have arrived:
+          // the outbox retries under the same Idempotency-Key, so the server returns that letter rather than
+          // making a second. If the server answered "no", the writer sees that now, while they can still fix it.
+          try app.container.outbox.queue(prisonerName: prisoner?.name ?? "Prisoner #\(request.prisonerId)", writingAs: request.writerId != nil ? writingAs : nil, letter: letter, attachments: attachments)
+          attachments = []
+          finished()
+          sending = false; progress = nil
+          await app.notifier.askPermissionOnce()
+          app.pop()
+          app.show("No connection. Your letter is saved on this phone and will be sent when you are back online.")
+        }
       }
     } catch {
       sending = false; progress = nil
       self.error = AppError.from(error).userMessage ?? (editing ? "Could not save the letter." : "Could not send the letter.")
     }
+  }
+
+  /// The letter has left this screen, to the server or to the outbox: the draft and any outbox copy it came from are done with.
+  private func finished() {
+    sent = true
+    autosave?.cancel()
+    if usesDrafts, let userId { app.container.drafts.delete(userId: userId, prisonerId: request.prisonerId) }
+    if let old = request.outboxId { app.container.outbox.delete(old) }
+  }
+
+  private func keyForThisLetter() -> String {
+    if let sendKey, sendKey.body == body { return sendKey.key }
+    let fresh = UUID().uuidString
+    sendKey = (fresh, body)
+    return fresh
   }
 
   /// The letter exists; attach files one by one. A failed upload is reported but the letter stays sent.

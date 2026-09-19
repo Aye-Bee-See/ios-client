@@ -7,13 +7,14 @@ import Foundation
 struct APIEnvelope<T: Decodable>: Decodable {
   let data: T?
   let info: String?
+  let name: String?
   let errors: [String]?
   let error: String?
   let total: Int?
   let page: Int?
   let pageSize: Int?
 
-  private enum CodingKeys: String, CodingKey { case data, info, errors, error, total, page, pageSize = "page_size" }
+  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, total, page, pageSize = "page_size" }
 
   /// The payload, or an error a screen can show when the server sent none.
   func required(_ what: String = "response") throws -> T {

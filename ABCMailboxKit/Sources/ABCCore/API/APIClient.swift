@@ -51,8 +51,10 @@ public final class APIClient: Sendable {
     try decode(try await perform(request("GET", path)))
   }
 
-  func send<B: Encodable, T: Decodable>(_ method: String, _ path: String, body: B) async throws -> APIEnvelope<T> {
+  /// `headers` carries `Idempotency-Key` on the two requests that must never happen twice.
+  func send<B: Encodable, T: Decodable>(_ method: String, _ path: String, body: B, headers: [String: String] = [:]) async throws -> APIEnvelope<T> {
     var r = try request(method, path)
+    headers.forEach { r.setValue($1, forHTTPHeaderField: $0) }
     r.setValue("application/json", forHTTPHeaderField: "Content-Type")
     r.httpBody = try Self.encoder.encode(body)
     return try decode(try await perform(r))
@@ -67,7 +69,7 @@ public final class APIClient: Sendable {
     try await perform(request("GET", path, query: query))
   }
 
-  func upload<T: Decodable>(_ path: String, fields: [(String, String)], file: UploadFile) async throws -> APIEnvelope<T> {
+  func upload<T: Decodable>(_ path: String, fields: [(String, String)], file: UploadFile, headers: [String: String] = [:]) async throws -> APIEnvelope<T> {
     let boundary = "abcmailbox-\(UUID().uuidString)"
     var body = Data()
     for (name, value) in fields {
@@ -78,6 +80,7 @@ public final class APIClient: Sendable {
     body.append(file.data)
     body.append("\r\n--\(boundary)--\r\n")
     var r = try request("POST", path)
+    headers.forEach { r.setValue($1, forHTTPHeaderField: $0) }
     r.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     r.httpBody = body
     r.timeoutInterval = 120
@@ -149,8 +152,11 @@ public final class APIClient: Sendable {
     case 403: return .forbidden(info ?? "You are not allowed to do that.")
     case 404: return .notFound(info)
     // Lifecycle refusals put the useful sentence in `error` ("A printed letter cannot move to queued"); `info` is generic.
-    case 409: return .conflict(envelope?.error ?? info)
+    case 409: return .conflict(envelope?.error ?? info, name: envelope?.name)
     case 410: return .gone(info)
+    // An Idempotency-Key reused for a different request (API PR #97). Retrying unchanged would get the
+    // same answer, so it is a refusal, not a server fault.
+    case 422: return .validation([envelope?.error ?? info ?? "The request was rejected."])
     case 429: return .rateLimited(info, retryAfterSeconds: retryAfter.flatMap { Int($0) })
     default: return .server(status: status, info: info)
     }

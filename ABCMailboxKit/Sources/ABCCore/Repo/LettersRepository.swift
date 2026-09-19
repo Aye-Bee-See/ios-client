@@ -40,18 +40,26 @@ public final class LettersRepository {
   }
 
   public func send(_ letter: NewLetter) async throws -> Letter {
-    // A 409 here means a group rotated its key between our lookup and the send: encode again
-    // (which fetches the new public key and version) and retry once.
-    for attempt in 0..<2 {
+    let headers = letter.idempotencyKey.map { ["Idempotency-Key": $0] } ?? [:]
+    var rotations = 0, waits = 0
+    while true {
+      // In end-to-end mode every attempt encrypts afresh. That is fine under one Idempotency-Key: the
+      // server does not compare ciphertext, and hands back the first attempt's letter if there was one.
       let request = try await codec.outgoing(letter).request
       do {
-        let envelope: APIEnvelope<MessageDTO> = try await api.send("POST", "messaging/message", body: request)
+        let envelope: APIEnvelope<MessageDTO> = try await api.send("POST", "messaging/message", body: request, headers: headers)
         return codec.incoming(try envelope.required("sent letter"))
-      } catch let e as AppError where e.isConflict && attempt == 0 {
+      } catch let e as AppError where e.isStillProcessing && waits < 3 {
+        // Our own earlier attempt under this key is still running. A second later it will have an answer.
+        waits += 1
+        try await Task.sleep(for: .seconds(1))
+      } catch let e as AppError where e.isConflict && !e.isStillProcessing && rotations == 0 {
+        // A group rotated its key between our lookup and the send: encode again (which fetches the
+        // new public key and version) and retry once.
+        rotations += 1
         await codec.refreshKeys()
       }
     }
-    throw AppError.unexpected("unreachable")
   }
 
   public func edit(_ edit: LetterEdit) async throws {
@@ -64,7 +72,8 @@ public final class LettersRepository {
     try await api.send("DELETE", "messaging/message", body: IdBody(id: messageId))
   }
 
-  public func upload(messageId: Int, staged: StagedFile) async throws -> Attachment {
+  /// `idempotencyKey`: one per file, repeated on every retry, so a retried upload returns the file already stored.
+  public func upload(messageId: Int, staged: StagedFile, idempotencyKey: String? = nil) async throws -> Attachment {
     await codec.ready()
     let bytes: Data
     do { bytes = try Data(contentsOf: staged.url) } catch { throw AppError.unexpected("Could not read \(staged.name).") }
@@ -78,7 +87,7 @@ public final class LettersRepository {
       payload = encrypted.ciphertext
       fields.append(("nonce", encrypted.nonce))
     }
-    let envelope: APIEnvelope<AttachmentDTO> = try await api.upload("messaging/attachment", fields: fields, file: UploadFile(field: "file", filename: staged.name, mimeType: staged.mimeType, data: payload))
+    let envelope: APIEnvelope<AttachmentDTO> = try await api.upload("messaging/attachment", fields: fields, file: UploadFile(field: "file", filename: staged.name, mimeType: staged.mimeType, data: payload), headers: idempotencyKey.map { ["Idempotency-Key": $0] } ?? [:])
     return try envelope.required("attachment").toDomain()
   }
 

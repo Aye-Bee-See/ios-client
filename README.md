@@ -2,7 +2,7 @@
 
 The iPhone and iPad client for Aye Bee See, a correspondence network for political prisoners. Writers find a prisoner, read the facility's mail rules, and write; a support group prints and mails the letter and records the reply.
 
-It does what the Android client (`../Android`) does, screen for screen, and speaks the same API and the same end-to-end encryption. The Android documents remain the map: `../Android/docs/PLAN.md` for what is built and why, `../android-client-brief.md` for the API. This directory adds only what is particular to iOS:
+It does what the Android client (`../Android`) did as of its phase 8 (19 September 2026), screen for screen, and speaks the same API and the same end-to-end encryption. What Android has since gained and this app has not is listed under "Behind Android" below. The Android documents remain the map: `../Android/docs/PLAN.md` for what is built and why, `../android-client-brief.md` for the API. This directory adds only what is particular to iOS:
 
 - `docs/DECISIONS.md`: choices that are not obvious from the code (crypto library, Keychain, project layout), and every place this app deliberately differs from Android.
 
@@ -26,7 +26,7 @@ Requires Xcode 26 (Swift 6 toolchain; the code is in Swift 5 language mode). The
 cd ABCMailboxKit && swift test
 ```
 
-That is the whole test suite: about 115 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
+That is the whole test suite: about 130 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
 
 To run the app, open `ABCMailbox.xcodeproj`, choose the `ABCMailbox` scheme and a simulator, and run. To sign and run on a phone, set your team under Signing & Capabilities.
 
@@ -62,10 +62,26 @@ Debug builds have the same hidden server setting as Android: on the Account tab,
 
 Both devices must be on the same Wi-Fi, the API must listen on all interfaces (it does), and the Mac's firewall must allow incoming connections for node. The first request makes iOS ask for permission to find devices on the local network; say yes. Plain `http` is allowed to local addresses only (an IP, `localhost`, `*.local`); anything else, including the release API, must be `https`.
 
+## Writing without a connection
+
+Pressing Send with no route to the server puts the letter in an outbox, encrypted under a key in the Keychain as drafts are. Every letter, and every file with it, carries an `Idempotency-Key` made once and repeated on each retry (API pull request #97), so a letter whose first attempt did arrive unheard comes back as itself rather than being mailed twice. In end-to-end mode the letter is sealed when it is sent, not when it is written, because sealing needs the relay group's current public key. Waiting letters show above the Inbox, with a count on the tab, and can be edited, deleted, or tried at once; a refused one keeps the server's reason.
+
+When they go out is where iOS is weaker than Android. While the app is open it watches the network and sends the moment there is one; it also sends at launch, on coming to the front, and after sign-in. With the app closed, it asks iOS for a background task that needs a network, and iOS runs that when it chooses, often hours later and never for an app the person has swiped away. The Inbox says so in plain words.
+
+## Behind Android
+
+As of Android commit `cbf93c3`, not yet in this app:
+
+- **Spanish and Russian** (Android phase 9). Every string here is English, in the Swift source.
+- **Key set-up at sign-in in both modes** (API pull request #95): making keys while the server is still in server mode, setting up the group key and handing it to waiting members without being asked, giving keys to writers who have none, and sealing missing envelopes (`GET /messaging/envelopes/missing`). This app makes keys at sign-in only when the server is already end-to-end, and the group steps are manual (Inbox, Members).
+- **Push notifications and the notification feed** (API pull request #96). iPhones are reached through Firebase, so this needs a Firebase project with this app added to it (`GoogleService-Info.plist`), an APNs key from a paid Apple developer account uploaded there, the Push Notifications capability, and a notification service extension to replace the server's bland alert with wording made on the phone. The feed (`GET /auth/notifications`) needs none of that and could be built first.
+- An accessibility pass (Android phase 7c). Fields and buttons are labelled for VoiceOver, but nothing has been listened to.
+
 ## What was verified, and what was not
 
 As of 19 September 2026.
 
 - **Verified by tests and tools.** All tests pass. Crypto interoperates with the API and libsodium.js in both directions. Against the live development servers: the directory, the offline download, a writer's threads, a group's queue and writers in server mode; and in end-to-end mode, a group member's key (wrapped by the Android app) opened with their password, the group key opened with that, and letters written by other clients decrypted. The app builds in Xcode, Debug and Release, with no warnings, including the asset catalog (icon, accent colour).
 - **Seen on screen** (iPhone 17 simulator, iOS 26.5, against the local API in server mode, signed out): the Directory home page with featured prisoners, the prisoners list with its filters and with more rows loading as it scrolls, a prisoner's profile, the sign-in screen, and the Account tab with the offline directory downloaded on launch and the server's mode detected. That first run found two layout bugs, both fixed: interest tags wrapping onto a line whose height the row had not reserved, so the next row's divider ran through them; and "Est. release" breaking in the middle.
-- **Not yet seen on screen.** Everything behind sign-in: the inbox, threads, compose and attachments, claim, recovery and the recovery-code screen, password change, and all of the group screens; the facilities and groups lists and pages; anything against the end-to-end server; the saved-copy banner with no connection; the camera and printing; an iPad; dark mode; large text sizes; VoiceOver. The logic behind those screens is tested; their layout is not. Expect more findings of the kind above. The "what to try by hand" lists in `../Android/docs/PLAN.md` apply unchanged.
+- **Seen since, signed in as a group member:** the print queue.
+- **Not yet seen on screen.** The outbox (it needs the API to be unreachable, and the development server was in use); the rest behind sign-in: the writer's inbox, threads, compose and attachments, claim, recovery and the recovery-code screen, password change, and all of the group screens; the facilities and groups lists and pages; anything against the end-to-end server; the saved-copy banner with no connection; the camera and printing; an iPad; dark mode; large text sizes; VoiceOver. The logic behind those screens is tested; their layout is not. Expect more findings of the kind above. The "what to try by hand" lists in `../Android/docs/PLAN.md` apply unchanged.

@@ -14,6 +14,7 @@ public final class AppContainer {
   public let letters: LettersRepository
   public let group: GroupRepository
   public let drafts: DraftsRepository
+  public let outbox: OutboxRepository
   public let files: LocalFiles
   public let devServer: DevServerRepository
 
@@ -28,7 +29,8 @@ public final class AppContainer {
     configuration: URLSessionConfiguration = .ephemeral,
     files: LocalFiles = LocalFiles(),
     draftsDirectory: URL? = nil,
-    offlineDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("offline", isDirectory: true)
+    offlineDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("offline", isDirectory: true),
+    outboxDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("outbox", isDirectory: true)
   ) {
     // Keychain items outlive the app: deleting it from the phone leaves them behind, and a
     // reinstall would start out signed in with someone's key. `UserDefaults` does die with
@@ -56,6 +58,7 @@ public final class AppContainer {
     group = GroupRepository(api: api, letters: letters, directory: directory, codec: codec, keyring: keyring, engine: engine, vault: vault, sessions: sessions)
     let cipher = SecretCipher(store: secrets)
     drafts = draftsDirectory.map { DraftsRepository(cipher: cipher, directory: $0) } ?? DraftsRepository(cipher: cipher)
+    outbox = OutboxRepository(directory: outboxDirectory, cipher: cipher, files: files, letters: letters, sessions: sessions)
     devServer = DevServerRepository(defaults: defaults, holder: holder, sessions: sessions, modes: modes)
   }
 }

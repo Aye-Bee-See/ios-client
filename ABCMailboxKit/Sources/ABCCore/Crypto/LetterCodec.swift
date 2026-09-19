@@ -13,8 +13,11 @@ public struct NewLetter: Sendable {
   public let fromPrisoner: Bool
   /// Group accounts, end-to-end: the group is a relay group of this facility, so the server lets it hold an envelope.
   public let groupRelaysFacility: Bool
+  /// Made up once per letter and repeated on every retry of it (API PR #97). A retry of a letter that
+  /// did arrive gets that letter back instead of creating a second one for the prisoner.
+  public let idempotencyKey: String?
 
-  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false) {
+  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false, idempotencyKey: String? = nil) {
     self.prisonerId = prisonerId
     self.body = body
     self.relayNote = relayNote
@@ -22,6 +25,7 @@ public struct NewLetter: Sendable {
     self.asWriterId = asWriterId
     self.fromPrisoner = fromPrisoner
     self.groupRelaysFacility = groupRelaysFacility
+    self.idempotencyKey = idempotencyKey
   }
 }
 

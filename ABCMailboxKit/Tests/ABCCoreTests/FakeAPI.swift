@@ -30,9 +30,51 @@ final class FakeAPI: @unchecked Sendable {
   var challenges: [String: String] = [:] // username -> challenge (base64)
   /// Answer the next matching request with this instead (one shot), e.g. a 409 to simulate a key rotation.
   var intercept: ((Recorded) -> Stubbed?)?
+  /// The phone has no connection: every request fails before it leaves.
+  var noSignal = false
+  /// One shot: the next request matching this is carried out, and then its answer is lost on the way
+  /// back (a timeout, a tunnel). The server has the letter; the phone does not know.
+  var loseAnswerTo: ((Recorded) -> Bool)?
+  /// Idempotency-Key -> what it made (API PR #97).
+  private var keys: [String: (fingerprint: String, id: Int)] = [:]
   private var nextId = 100
 
-  func handle(_ r: Recorded) -> Stubbed { lock.withLock { route(r) } }
+  func handle(_ r: Recorded) -> Stubbed {
+    lock.withLock {
+      if noSignal { return Stubbed(status: -1) }
+      let answer = idempotent(r)
+      if let lose = loseAnswerTo, lose(r) { loseAnswerTo = nil; return Stubbed(status: -1) }
+      return answer
+    }
+  }
+
+  /// The same key again returns what the first attempt made, marked as a replay; a key reused for a
+  /// different letter is a 422; a key whose letter was deleted since is a 410. Refusals free the key.
+  private func idempotent(_ r: Recorded) -> Stubbed {
+    guard r.method == "POST", let key = r.headers["Idempotency-Key"], let who = caller(r)?.id else { return route(r) }
+    let isLetter = r.path == "/messaging/message"
+    let fingerprint: String
+    if isLetter {
+      fingerprint = "\(who)|\(r.json["prisoner"] ?? "")|\(r.json["sender"] ?? "")|\(r.json["user"] ?? "")|\(r.json["messageText"] ?? "")"
+    } else {
+      let parts = Multipart(r)
+      fingerprint = "\(who)|\(parts.fields["message"] ?? "")|\(parts.filename ?? "")|\(parts.file.count)"
+    }
+    if let known = keys[key] {
+      guard known.fingerprint == fingerprint else { return .error(422, info: "Error sending.", extra: ["name": "IdempotencyError", "error": "This Idempotency-Key was used for a different request."]) }
+      if isLetter {
+        guard let m = messages.first(where: { $0["id"] as? Int == known.id }), let a = caller(r) else { return .error(410, info: "That letter was deleted.") }
+        return .json(["data": visible(m, to: a), "success": true, "status": 201], status: 201, headers: ["Idempotent-Replayed": "true"])
+      }
+      guard let file = attachments[known.id] else { return .error(410, info: "That file was deleted.") }
+      return .json(["data": file.meta, "success": true, "status": 201], status: 201, headers: ["Idempotent-Replayed": "true"])
+    }
+    let answer = route(r)
+    if (200..<300).contains(answer.status), let made = ((try? JSONSerialization.jsonObject(with: answer.body)) as? [String: Any])?["data"] as? [String: Any], let id = made["id"] as? Int {
+      keys[key] = (fingerprint, id)
+    }
+    return answer
+  }
 
   private func id() -> Int { nextId += 1; return nextId }
   private func caller(_ r: Recorded) -> Account? {
@@ -215,6 +257,10 @@ final class FakeAPI: @unchecked Sendable {
     case ("GET", "/messaging/message"):
       guard let a = caller(r), let m = messages.first(where: { $0["id"] as? Int == r.query["id"].flatMap(Int.init) }) else { return .error(404, info: "No such letter.") }
       return .data(visible(m, to: a))
+
+    case ("DELETE", "/messaging/message"):
+      messages.removeAll { $0["id"] as? Int == body["id"] as? Int }
+      return .data([:])
 
     case ("PUT", "/messaging/message"):
       guard let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }

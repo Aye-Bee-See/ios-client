@@ -172,7 +172,7 @@ final class SessionFlowTests: XCTestCase {
     let fake = fake!
     let (configuration, _) = StubServer.configuration { fake.handle($0) }
     let fresh = UserDefaults(suiteName: "abc-tests-\(UUID().uuidString)")!
-    let reinstalled = AppContainer(defaultBaseURL: URL(string: "http://api.test/")!, secrets: app.secrets, defaults: fresh, configuration: configuration, files: LocalFiles(root: app.scratch), draftsDirectory: app.scratch, offlineDirectory: app.scratch)
+    let reinstalled = AppContainer(defaultBaseURL: URL(string: "http://api.test/")!, secrets: app.secrets, defaults: fresh, configuration: configuration, files: LocalFiles(root: app.scratch), draftsDirectory: app.scratch, offlineDirectory: app.scratch, outboxDirectory: app.scratch.appendingPathComponent("outbox"))
     XCTAssertFalse(reinstalled.sessions.state.isSignedIn)
     XCTAssertNil(app.secrets.read("key_vault"))
   }

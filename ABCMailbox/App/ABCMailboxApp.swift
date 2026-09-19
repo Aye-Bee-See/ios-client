@@ -1,19 +1,48 @@
 import ABCCore
+import BackgroundTasks
 import SwiftUI
 
 /// The process-wide entry point. Everything long-lived is built once, in `AppModel`,
 /// and handed down through the SwiftUI environment.
 @main
 struct ABCMailboxApp: App {
-  @State private var app = AppModel(container: AppContainer(defaultBaseURL: BuildInfo.apiBaseURL))
+  @State private var app: AppModel
+  @Environment(\.scenePhase) private var scenePhase
 
-  init() { Theme.applyAppearance() }
+  init() {
+    Theme.applyAppearance()
+    let model = AppModel(container: AppContainer(defaultBaseURL: BuildInfo.apiBaseURL))
+    _app = State(initialValue: model)
+
+    // Letters written offline. While the app runs, it watches for the network itself; when it does not,
+    // iOS may wake it for this task (it must be registered before launch finishes).
+    model.container.outbox.onBackgroundFlush = { outcome in
+      model.report(outcome)
+    }
+    model.container.outbox.startWatchingNetwork()
+    BGTaskScheduler.shared.register(forTaskWithIdentifier: OutboxNotifier.backgroundTask, using: nil) { task in
+      let work = Task { @MainActor in
+        let outcome = await model.container.outbox.flush()
+        await model.notifier.notify(outcome)
+        if outcome.stillWaiting > 0 { OutboxNotifier.scheduleBackgroundSend() }
+        task.setTaskCompleted(success: outcome.stillWaiting == 0)
+      }
+      task.expirationHandler = { work.cancel() }
+    }
+  }
 
   var body: some Scene {
     WindowGroup {
       RootView()
         .environment(app)
         .tint(Theme.red)
+    }
+    .onChange(of: scenePhase) {
+      switch scenePhase {
+      case .active: Task { await app.flushOutbox() }
+      case .background: if app.container.outbox.hasWaiting { OutboxNotifier.scheduleBackgroundSend() }
+      default: break
+      }
     }
   }
 }

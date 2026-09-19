@@ -2,6 +2,16 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-19: the outbox sends when iOS allows, and says so
+
+**Context.** Android's outbox hands the job to WorkManager: "when there is a network, even if the app is closed or the phone restarted". iOS has nothing with that guarantee.
+
+**Decision.** Three triggers. While the app runs, `NWPathMonitor` flushes the outbox the moment a connection appears. The app also flushes at launch, on coming to the front, and after sign-in. For a closed app, a `BGProcessingTask` that requires a network is requested whenever the app goes to the background with letters waiting; its outcome is reported in a local notification that names nobody. The Inbox wording does not promise what Android's does.
+
+**Consequences.** A letter written on the train and never looked at again may wait until the app is next opened. `Idempotency-Key` (API PR #97) is what makes all this safe to be sloppy about: any number of triggers may race, and a repeat is answered with the first attempt's letter. The outbox is files (one sealed blob per letter, in a folder per account), not a database, for the same reason drafts are. Permission for notifications is asked the first time a letter is queued, when the reason is obvious, and never at launch.
+
+**Rejected.** A background `URLSession` upload, which iOS does complete for a closed app: it needs the request body on disk at queue time, and in end-to-end mode the letter cannot be sealed until the relay group's current public key has been fetched.
+
 ## 2026-09-19: where iOS deliberately differs from Android
 
 The brief was "the same thing as the Android app", so each difference is listed with its reason.

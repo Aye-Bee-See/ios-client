@@ -12,6 +12,7 @@ struct RootView: View {
       TabView(selection: $app.tab) {
         tab(.directory, "Directory", "book", path: $app.directoryPath) { DirectoryHomeView(app: app) }
         tab(.inbox, "Inbox", "envelope", path: $app.inboxPath) { InboxView() }
+          .badge(app.container.outbox.items.count) // letters waiting to be sent; no badge at zero
         tab(.account, "Account", "person", path: $app.accountPath) { AccountView(app: app) }
       }
       toastOverlay
@@ -33,6 +34,8 @@ struct RootView: View {
     .onChange(of: app.user?.id) { old, new in
       // Signing in from signed-out changes nothing that was private; every other change does.
       if old != nil, old != new { app.closeEverything() }
+      // Letters belong to the account that wrote them: show this account's, and send them now that someone is signed in.
+      Task { await app.flushOutbox() }
     }
   }
 

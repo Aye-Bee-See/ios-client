@@ -37,6 +37,8 @@ struct ComposeRequest: Hashable {
   var writerName: String?
   /// Group accounts: record a prisoner's reply on this writer's thread instead of writing a letter.
   var replyForUserId: Int?
+  /// Reopen a letter that is waiting in the outbox; sending it again replaces the queued copy.
+  var outboxId: String?
 }
 
 /// Sign-in is a full-screen flow of its own, on top of whichever tab asked for it.
@@ -69,6 +71,8 @@ final class AppModel {
   @ObservationIgnored private var toastTask: Task<Void, Never>?
 
   init(container: AppContainer) { self.container = container }
+
+  let notifier = OutboxNotifier()
 
   var sessions: SessionRepository { container.sessions }
   var user: SessionUser? { container.sessions.state.user }
@@ -124,6 +128,20 @@ final class AppModel {
     authPath = []
     if goToInbox { tab = .inbox }
     if let message { show(message) }
+  }
+
+  // MARK: The outbox
+
+  /// Sends what is waiting and says what happened: at launch, on coming to the front, after sign-in.
+  func flushOutbox() async {
+    container.outbox.reload()
+    guard container.outbox.hasWaiting else { return }
+    report(await container.outbox.flush())
+  }
+
+  /// In the app, a toast. The words are the ones the lock-screen notification uses: they name nobody.
+  func report(_ outcome: FlushOutcome) {
+    if let text = OutboxNotifier.text(outcome) { show(text) }
   }
 
   // MARK: Toasts (what Android shows in a snackbar)

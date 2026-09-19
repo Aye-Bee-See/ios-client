@@ -12,8 +12,10 @@ public enum AppError: Error, Equatable, Sendable {
   /// The caller is known but not allowed; the sentence explains what to do.
   case forbidden(String)
   case notFound(String?)
-  /// A lifecycle or state conflict (409), for example moving a letter backwards.
-  case conflict(String?)
+  /// A lifecycle or state conflict (409), for example moving a letter backwards. `name` is the API's
+  /// error name (`KeyVersionError`, `LetterStatusError`, `IdempotencyError`), for the few callers that
+  /// must tell them apart.
+  case conflict(String?, name: String? = nil)
   /// A used or expired claim token (410).
   case gone(String?)
   /// 429: too many sign-in, claim, or recovery attempts. The seconds come from the `Retry-After` header.
@@ -31,7 +33,8 @@ public enum AppError: Error, Equatable, Sendable {
   public var userMessage: String? {
     switch self {
     case .validation(let errors): return errors.joined(separator: " ")
-    case .unauthorized(let info), .notFound(let info), .conflict(let info), .gone(let info): return info
+    case .unauthorized(let info), .notFound(let info), .gone(let info): return info
+    case .conflict(let info, _): return info
     case .forbidden(let info): return info
     case .rateLimited(let info, let retryAfter):
       if let info { return info }
@@ -53,6 +56,9 @@ public enum AppError: Error, Equatable, Sendable {
   }
 
   public var isConflict: Bool { if case .conflict = self { return true } else { return false } }
+  /// The same Idempotency-Key is being processed right now (a retry racing the original, API PR #97):
+  /// wait a second and ask again. Not to be confused with a group's key rotation, which is also a 409.
+  public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError") = self { return true } else { return false } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }
   public var isGone: Bool { if case .gone = self { return true } else { return false } }
   /// No connection, or a reply that is not our API's at all. Only these fall back to the saved directory.
