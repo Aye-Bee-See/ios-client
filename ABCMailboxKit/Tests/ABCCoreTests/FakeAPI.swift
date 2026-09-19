@@ -1,0 +1,301 @@
+import ABCCrypto
+import Foundation
+
+/// A small in-memory imitation of the API in end-to-end mode: enough of `/auth`
+/// and `/messaging` to run whole flows. It stores exactly what a client sends,
+/// the way the real server does, and never sees a private key or a plaintext,
+/// so whatever the tests read back was opened with real libsodium on this side.
+final class FakeAPI: @unchecked Sendable {
+  struct Account {
+    var id: Int
+    var username: String
+    var password: String
+    var role = "user"
+    var chapterId: Int?
+    var managedBy: Int?
+    var keys: [String: Any] = [:] // publicKey, wrappedPrivateKey, kdfSalt, kdfParams, recovery…
+    var orgWrappedPrivateKey: String? // custody copy, while unclaimed
+    var claim: [String: Any]? // tokenHash, claimWrappedPrivateKey, claimSalt, claimKdfParams
+    var name: String?
+  }
+
+  private let lock = NSLock()
+  var mode = "e2e"
+  var accounts: [Account] = []
+  var messages: [[String: Any]] = []
+  var attachments: [Int: (meta: [String: Any], bytes: Data)] = [:]
+  var groupKeys: [Int: (publicKey: String, version: Int)] = [:]
+  var memberKeys: [Int: [Int: String]] = [:] // group -> member -> sealed group private key
+  var tokens: [String: Int] = [:]
+  var challenges: [String: String] = [:] // username -> challenge (base64)
+  /// Answer the next matching request with this instead (one shot), e.g. a 409 to simulate a key rotation.
+  var intercept: ((Recorded) -> Stubbed?)?
+  private var nextId = 100
+
+  func handle(_ r: Recorded) -> Stubbed { lock.withLock { route(r) } }
+
+  private func id() -> Int { nextId += 1; return nextId }
+  private func caller(_ r: Recorded) -> Account? {
+    guard let header = r.headers["Authorization"], let id = tokens[String(header.dropFirst("Bearer ".count))] else { return nil }
+    return accounts.first { $0.id == id }
+  }
+  private func index(_ id: Int) -> Int? { accounts.firstIndex { $0.id == id } }
+  private func userJSON(_ a: Account) -> [String: Any] {
+    ["id": a.id, "username": a.username, "role": a.role, "chapterId": a.chapterId ?? NSNull(), "name": a.name ?? NSNull(), "managedBy": a.managedBy ?? NSNull(), "publicKey": a.keys["publicKey"] ?? NSNull()]
+  }
+  private func bundle(_ a: Account) -> [String: Any] {
+    var b: [String: Any] = [:]
+    for k in ["publicKey", "wrappedPrivateKey", "kdfSalt", "kdfParams"] { b[k] = a.keys[k] ?? NSNull() }
+    b["hasRecovery"] = a.keys["recoveryWrappedPrivateKey"] != nil
+    if let g = a.chapterId, a.role == "chapter" {
+      b["orgKey"] = ["chapterId": g, "chapterPublicKey": groupKeys[g]?.publicKey ?? NSNull(), "wrappedOrgPrivateKey": memberKeys[g]?[a.id] ?? NSNull(), "keyVersion": groupKeys[g]?.version ?? NSNull()]
+    }
+    return b
+  }
+  private func issue(_ a: Account) -> [String: Any] {
+    let token = "token-\(a.id)-\(id())"
+    tokens[token] = a.id
+    return ["token": token, "expires": 1_800_000_000_000.0]
+  }
+  /// `envelopes` is filtered to the caller, as the real API does.
+  private func visible(_ m: [String: Any], to a: Account) -> [String: Any] {
+    var out = m
+    let all = m["envelopes"] as? [[String: Any]] ?? []
+    out["envelopes"] = all.filter { e in
+      let type = e["readerType"] as? String, reader = e["readerId"] as? Int
+      if type == "user" { return reader == a.id || accounts.contains { $0.id == reader && $0.managedBy != nil && $0.managedBy == a.chapterId } }
+      return reader == a.chapterId
+    }.map { e in e.filter { $0.key != "keyVersion" } }
+    out["attachments"] = attachments.values.map(\.meta).filter { $0["message"] as? Int == m["id"] as? Int }
+    return out
+  }
+
+  private func route(_ r: Recorded) -> Stubbed {
+    if let answer = intercept?(r) { intercept = nil; return answer }
+    let body = r.json
+    switch (r.method, r.path) {
+    case ("GET", "/health"):
+      return .json(["status": "ok", "encryptionMode": mode])
+
+    case ("POST", "/auth/login"):
+      guard let a = accounts.first(where: { $0.username == body["username"] as? String && $0.password == body["password"] as? String }) else { return .error(401, info: "Incorrect username or password.") }
+      var data: [String: Any] = ["user": userJSON(a), "token": issue(a)]
+      if mode == "e2e" { data["keys"] = bundle(a) }
+      return .data(data)
+
+    case ("POST", "/auth/logout"):
+      if let header = r.headers["Authorization"] { tokens[String(header.dropFirst("Bearer ".count))] = nil }
+      return .data([:])
+
+    case ("GET", "/auth/keys"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      return .data(bundle(a))
+
+    case ("PUT", "/auth/keys"):
+      guard let a = caller(r), let i = index(a.id) else { return .error(401, info: "Sign in.") }
+      if accounts[i].keys["publicKey"] != nil, body["publicKey"] != nil { return .error(409, info: "The public key is already set.") }
+      accounts[i].keys.merge(body) { $1 }
+      return .data([:])
+
+    case ("GET", "/auth/public-key"):
+      if let user = r.query["user"].flatMap(Int.init) { return .data(["user": user, "publicKey": accounts.first { $0.id == user }?.keys["publicKey"] ?? NSNull()]) }
+      let g = r.query["chapter"].flatMap(Int.init) ?? 0
+      return .data(["chapter": g, "publicKey": groupKeys[g]?.publicKey ?? NSNull(), "keyVersion": groupKeys[g]?.version ?? 0])
+
+    case ("PUT", "/auth/user"):
+      guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
+      if let password = body["password"] as? String {
+        accounts[i].password = password
+        for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }
+        tokens = tokens.filter { $0.value != target }
+        return .data(["token": issue(accounts[i])])
+      }
+      if let publicKey = body["publicKey"] as? String, accounts[i].managedBy == a.chapterId {
+        accounts[i].keys["publicKey"] = publicKey
+        accounts[i].orgWrappedPrivateKey = body["orgWrappedPrivateKey"] as? String
+      }
+      return .data([:])
+
+    case ("GET", "/auth/recover"):
+      guard let a = accounts.first(where: { $0.username == r.query["username"] }), let publicKey = a.keys["publicKey"] as? String, a.keys["recoveryWrappedPrivateKey"] != nil else { return .error(404, info: "No recovery.") }
+      let challenge = Sodium.randomBytes(32)
+      challenges[a.username] = Sodium.toBase64(challenge)
+      return .data([
+        "publicKey": publicKey, "recoveryWrappedPrivateKey": a.keys["recoveryWrappedPrivateKey"]!, "recoverySalt": a.keys["recoverySalt"]!, "recoveryKdfParams": a.keys["recoveryKdfParams"]!,
+        "sealedChallenge": Sodium.toBase64(try! Sodium.seal(challenge, to: Sodium.fromBase64(publicKey))),
+      ])
+
+    case ("POST", "/auth/recover"):
+      guard let username = body["username"] as? String, let i = accounts.firstIndex(where: { $0.username == username }), challenges[username] == body["challenge"] as? String else { return .error(401, info: "Recovery refused.") }
+      challenges[username] = nil
+      accounts[i].password = body["password"] as! String
+      for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams"] { accounts[i].keys[k] = body[k] }
+      return .data([:])
+
+    case ("GET", "/auth/claim"):
+      let hash = SecretCodes.hashHex(r.query["token"] ?? "")
+      guard let a = accounts.first(where: { $0.claim?["tokenHash"] as? String == hash }) else { return .error(404, info: "Unknown token.") }
+      var data: [String: Any] = ["writer": ["id": a.id, "name": a.name ?? a.username], "chapter": ["id": a.managedBy ?? 0, "name": "Test Chapter"], "expiresAt": "2026-09-22T10:00:00.000Z"]
+      for k in ["claimWrappedPrivateKey", "claimSalt", "claimKdfParams"] { data[k] = a.claim?[k] ?? NSNull() }
+      data["publicKey"] = a.keys["publicKey"] ?? NSNull()
+      return .data(data)
+
+    case ("POST", "/auth/claim"):
+      let hash = SecretCodes.hashHex(body["token"] as? String ?? "")
+      guard let i = accounts.firstIndex(where: { $0.claim?["tokenHash"] as? String == hash }) else { return .error(410, info: "Used or expired.") }
+      accounts[i].username = body["username"] as! String
+      accounts[i].password = body["password"] as! String
+      for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams", "recoveryWrappedPrivateKey", "recoverySalt", "recoveryKdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }
+      accounts[i].claim = nil
+      accounts[i].managedBy = nil
+      accounts[i].orgWrappedPrivateKey = nil // the group's copy is deleted on claim
+      return .json(["data": [:], "success": true, "status": 201], status: 201)
+
+    case ("GET", "/auth/writers"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      return .data(accounts.filter { $0.managedBy != nil && $0.managedBy == a.chapterId }.map { w -> [String: Any] in
+        ["id": w.id, "name": w.name ?? w.username, "username": w.username, "email": "w\(w.id)@managed.example", "managedBy": w.managedBy!, "publicKey": w.keys["publicKey"] ?? NSNull(), "orgWrappedPrivateKey": w.orgWrappedPrivateKey ?? NSNull(), "claimToken": w.claim.map { _ in ["expiresAt": "2099-01-01T00:00:00.000Z"] } ?? NSNull()]
+      })
+
+    case ("POST", "/auth/writer"):
+      guard let a = caller(r), let g = a.chapterId else { return .error(403, info: "Not a member.") }
+      if let version = body["orgKeyVersion"] as? Int, version != groupKeys[g]?.version { return .error(409, info: "Key version.", extra: ["name": "KeyVersionError"]) }
+      var w = Account(id: id(), username: "managed-\(nextId)", password: UUID().uuidString, managedBy: g, name: body["name"] as? String)
+      if let publicKey = body["publicKey"] { w.keys["publicKey"] = publicKey }
+      w.orgWrappedPrivateKey = body["orgWrappedPrivateKey"] as? String
+      accounts.append(w)
+      return .data(["id": w.id, "name": w.name!, "username": w.username, "managedBy": g, "publicKey": w.keys["publicKey"] ?? NSNull(), "orgWrappedPrivateKey": w.orgWrappedPrivateKey ?? NSNull()])
+
+    case ("POST", "/auth/writer/token"):
+      guard let i = (body["writer"] as? Int).flatMap(index) else { return .error(404, info: "No such writer.") }
+      if body["tokenHash"] == nil { // server mode: the server makes the token
+        let token = SecretCodes.generate()
+        accounts[i].claim = ["tokenHash": SecretCodes.hashHex(token)]
+        return .data(["writer": accounts[i].id, "token": token, "expiresAt": "2026-09-22T10:00:00.000Z"])
+      }
+      accounts[i].claim = body.filter { $0.key != "writer" }
+      return .data(["writer": accounts[i].id, "expiresAt": "2026-09-22T10:00:00.000Z"])
+
+    case ("DELETE", "/auth/writer/token"):
+      if let i = (body["writer"] as? Int).flatMap(index) { accounts[i].claim = nil }
+      return .data([:])
+
+    case ("PUT", "/auth/chapter-keys"):
+      guard let a = caller(r), let g = body["chapter"] as? Int else { return .error(401, info: "Sign in.") }
+      if groupKeys[g] != nil { return .error(409, info: "This group already has a key.") }
+      groupKeys[g] = (body["publicKey"] as! String, 1)
+      memberKeys[g, default: [:]][a.id] = body["wrappedOrgPrivateKey"] as? String
+      return .data([:])
+
+    case ("GET", "/auth/member-keys"):
+      let g = r.query["chapter"].flatMap(Int.init) ?? 0
+      return .data(["chapter": g, "members": accounts.filter { $0.role == "chapter" && $0.chapterId == g }.map { m -> [String: Any] in
+        ["id": m.id, "username": m.username, "name": m.name ?? NSNull(), "publicKey": m.keys["publicKey"] ?? NSNull(), "holdsGroupKey": memberKeys[g]?[m.id] != nil]
+      }])
+
+    case ("PUT", "/auth/member-key"):
+      memberKeys[body["chapter"] as! Int, default: [:]][body["user"] as! Int] = body["wrappedOrgPrivateKey"] as? String
+      return .data([:])
+
+    case ("DELETE", "/auth/member-key"):
+      memberKeys[body["chapter"] as! Int]?[body["user"] as! Int] = nil
+      return .data([:])
+
+    case ("POST", "/messaging/message"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      for e in body["envelopes"] as? [[String: Any]] ?? [] where e["readerType"] as? String == "chapter" {
+        if e["keyVersion"] as? Int != groupKeys[e["readerId"] as? Int ?? 0]?.version { return .error(409, info: "Error sending.", extra: ["name": "KeyVersionError", "error": "That group rotated its key."]) }
+      }
+      var m = body
+      m["id"] = id(); m["chat"] = 7; m["status"] = body["sender"] as? String == "prisoner" ? "received" : "queued"
+      m["user"] = body["user"] ?? a.id; m["createdAt"] = "2026-09-19T10:00:00.000Z"; m["keep"] = false
+      messages.append(m)
+      return .data(visible(m, to: a))
+
+    case ("GET", "/messaging/message"):
+      guard let a = caller(r), let m = messages.first(where: { $0["id"] as? Int == r.query["id"].flatMap(Int.init) }) else { return .error(404, info: "No such letter.") }
+      return .data(visible(m, to: a))
+
+    case ("PUT", "/messaging/message"):
+      guard let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
+      messages[i].merge(body) { $1 }
+      for k in ["relayNoteCiphertext", "relayNoteNonce"] where body[k] == nil && body["ciphertext"] != nil { messages[i][k] = nil }
+      return .data([:])
+
+    case ("GET", "/messaging/messages"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      let rows = messages.filter { $0["relayChapter"] as? Int == r.query["relayChapter"].flatMap(Int.init) && $0["status"] as? String == r.query["status"] }
+      return .data(rows.map { visible($0, to: a) }, extra: ["total": rows.count, "page": 1, "page_size": 20])
+
+    case ("PUT", "/messaging/status"):
+      guard let a = caller(r), let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
+      let order = ["queued", "printed", "mailed"], from = messages[i]["status"] as? String ?? "", to = body["status"] as? String ?? ""
+      guard let f = order.firstIndex(of: from), let t = order.firstIndex(of: to), t == f + 1 else {
+        return .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "A \(from) letter cannot move to \(to)."])
+      }
+      messages[i]["status"] = to
+      return .data(visible(messages[i], to: a))
+
+    case ("POST", "/messaging/envelope"):
+      guard let i = messages.firstIndex(where: { $0["id"] as? Int == body["message"] as? Int }) else { return .error(404, info: "No such letter.") }
+      messages[i]["envelopes"] = (messages[i]["envelopes"] as? [[String: Any]] ?? []) + [body.filter { $0.key != "message" }]
+      return .data([:])
+
+    case ("POST", "/messaging/attachment"):
+      let parts = Multipart(r)
+      let new = id()
+      let meta: [String: Any] = ["id": new, "message": Int(parts.fields["message"] ?? "") ?? 0, "originalName": parts.filename ?? "file", "mimeType": parts.fileType ?? "application/octet-stream", "size": parts.file.count, "nonce": parts.fields["nonce"] ?? NSNull()]
+      attachments[new] = (meta, parts.file)
+      return .data(meta)
+
+    case ("GET", "/messaging/attachment"):
+      guard let a = attachments[r.query["id"].flatMap(Int.init) ?? 0] else { return .error(404, info: "No such file.") }
+      return Stubbed(body: a.bytes)
+
+    case ("GET", "/prisoner/prisoner"):
+      let pid = r.query["id"].flatMap(Int.init) ?? 0
+      return .data(["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]])
+
+    case ("GET", "/prison/prison"):
+      return .data(["id": 1, "prisonName": "Test Prison", "routing": "direct", "relay_groups": [["id": 1, "name": "Test Chapter", "accountStatus": "active"], ["id": 2, "name": "Partner Chapter", "accountStatus": "active"], ["id": 3, "name": "Suspended Chapter", "accountStatus": "suspended"]]])
+
+    case ("GET", "/prison/mail-rules"):
+      return .data(["categories": [], "rules": []])
+
+    default:
+      return .error(404, info: "The fake API has no \(r.method) \(r.path).")
+    }
+  }
+}
+
+/// Just enough multipart parsing to check what an upload carried.
+struct Multipart {
+  var fields: [String: String] = [:]
+  var file = Data()
+  var filename: String?
+  var fileType: String?
+
+  init(_ r: Recorded) {
+    guard let type = r.headers["Content-Type"], let boundary = type.components(separatedBy: "boundary=").last else { return }
+    let delimiter = Data("--\(boundary)".utf8), blank = Data("\r\n\r\n".utf8)
+    var parts: [Data] = []
+    var rest = r.body[...]
+    while let range = rest.range(of: delimiter) {
+      parts.append(Data(rest[rest.startIndex..<range.lowerBound]))
+      rest = rest[range.upperBound...]
+    }
+    for part in parts {
+      guard let split = part.range(of: blank) else { continue }
+      let head = String(decoding: part[part.startIndex..<split.lowerBound], as: UTF8.self)
+      let content = Data(part[split.upperBound..<part.endIndex].dropLast(2)) // the CRLF before the next delimiter
+      guard let name = head.components(separatedBy: "name=\"").dropFirst().first?.components(separatedBy: "\"").first else { continue }
+      if head.contains("filename=\"") {
+        file = content
+        filename = head.components(separatedBy: "filename=\"").last?.components(separatedBy: "\"").first
+        fileType = head.components(separatedBy: "Content-Type: ").last?.trimmingCharacters(in: .whitespacesAndNewlines)
+      } else {
+        fields[name] = String(decoding: content, as: UTF8.self)
+      }
+    }
+  }
+}

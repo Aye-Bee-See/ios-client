@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The build's API address. Set per configuration (API_BASE_URL) in the project's build settings. -->
+	<key>APIBaseURL</key>
+	<string>$(API_BASE_URL)</string>
+	<!-- abcmailbox://claim?token=… until a domain exists for verified https links (universal links). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>me.paxana.abcmailbox.claim</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>abcmailbox</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Plain http is allowed to local addresses only (localhost, an IP on the Wi-Fi, *.local): what a
+	     developer's API looks like. Everything else, including the release API, must be https. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Developer builds can talk to an API running on a computer on the same Wi-Fi.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo of a handwritten letter, or of a prisoner's reply, to attach it.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

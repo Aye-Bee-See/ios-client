@@ -1,0 +1,108 @@
+import ABCCore
+import Observation
+import SwiftUI
+
+/// The sign-in flow: a stack of its own, shown full screen over whichever tab asked for it.
+struct AuthFlowView: View {
+  @Environment(AppModel.self) private var app
+
+  var body: some View {
+    @Bindable var app = app
+    NavigationStack(path: $app.authPath) {
+      LoginView(app: app)
+        .navigationDestination(for: AuthRoute.self) { route in
+          switch route {
+          case .claim(let token): ClaimView(app: app, token: token)
+          case .recover: RecoverView(app: app)
+          }
+        }
+    }
+  }
+}
+
+/// Everything the sign-in screen shows. The view renders it and calls the event
+/// functions; the model is the only thing that changes it.
+@MainActor @Observable
+final class LoginModel {
+  var username = ""
+  var password = ""
+  var showPassword = false
+  private(set) var submitting = false
+  private(set) var error: String?
+
+  @ObservationIgnored private let app: AppModel
+  init(app: AppModel) { self.app = app }
+
+  var canSubmit: Bool { !username.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty && !submitting }
+
+  func edited() { error = nil }
+
+  func submit() async {
+    guard canSubmit else { return }
+    submitting = true
+    error = nil
+    defer { submitting = false }
+    do {
+      try await app.sessions.login(username: username, password: password)
+      password = ""
+      app.authFinished()
+    } catch {
+      self.error = Self.message(.from(error))
+    }
+  }
+
+  static func message(_ error: AppError) -> String {
+    switch error {
+    case .unauthorized: return "Incorrect username or password."
+    case .rateLimited: return error.userMessage ?? "Too many sign-in attempts. Try again later."
+    case .network: return "Can't reach the server. Check your connection and try again."
+    default: return error.userMessage ?? "Something went wrong. Please try again."
+    }
+  }
+}
+
+/// Mirrors `login.html`: username, password with a Show toggle, the note that
+/// accounts come from support groups, and a pointer to recovery.
+struct LoginView: View {
+  @State private var model: LoginModel
+  private let app: AppModel
+  @FocusState private var focus: Field?
+  private enum Field { case username, password }
+
+  init(app: AppModel) {
+    self.app = app
+    _model = State(initialValue: LoginModel(app: app))
+  }
+
+  var body: some View {
+    Screen(spacing: 16, horizontal: 24) {
+      Text("Sign in").font(Theme.headline).padding(.top, 12)
+      Muted("Writers and support groups sign in here.")
+
+      LabeledField(label: "Username") {
+        TextField("", text: $model.username)
+          .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+          .submitLabel(.next).focused($focus, equals: .username).onSubmit { focus = .password }
+          .accessibilityIdentifier("username")
+      }
+      PasswordField(label: "Password", text: $model.password, show: $model.showPassword) { Task { await model.submit() } }
+        .focused($focus, equals: .password).submitLabel(.go)
+        .accessibilityIdentifier("password")
+      ErrorText(model.error).accessibilityIdentifier("error")
+
+      Button { Task { await model.submit() } } label: {
+        if model.submitting { ProgressView().tint(Theme.paper) } else { Text("Sign in") }
+      }
+      .buttonStyle(.primary).disabled(!model.canSubmit).accessibilityIdentifier("submit")
+
+      Muted("Don't have an account? Accounts are created by support group organizers. Ask the group you write through to set one up for you.").padding(.top, 8)
+      Button("I have a claim token") { app.authPath.append(.claim(token: nil)) }.buttonStyle(.link)
+      Button("Forgot your password?") { app.authPath.append(.recover) }.buttonStyle(.link)
+    }
+    .disabled(model.submitting)
+    .onChange(of: model.username) { model.edited() }
+    .onChange(of: model.password) { model.edited() }
+    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Back") { app.authPresented = false } } }
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}

@@ -1,0 +1,150 @@
+{
+ "data": {
+  "mailRules": [
+   "return_address_required",
+   "plain_envelopes",
+   "no_glitter_or_stickers",
+   "no_photos",
+   "no_enclosures",
+   "mail_read_by_staff"
+  ],
+  "id": 1,
+  "prisonName": "Test Prison",
+  "address": {
+   "street": "123 Fake Street"
+  },
+  "country": "United States",
+  "routing": "direct",
+  "scanService": null,
+  "pageLimit": 4,
+  "photoLimit": null,
+  "mailLanguages": [
+   "en"
+  ],
+  "notes": null,
+  "verifiedBy": null,
+  "verifiedAt": null,
+  "recordStatus": "published",
+  "createdAt": "2026-09-17T21:25:48.504Z",
+  "updatedAt": "2026-09-17T22:17:02.907Z",
+  "mail_rule_details": [
+   {
+    "id": 1,
+    "tag": "return_address_required",
+    "category": "addressing",
+    "label": "Return address required",
+    "description": "Every envelope needs a full sender name and postal address or it is refused.",
+    "retiredAt": null
+   },
+   {
+    "id": 3,
+    "tag": "plain_envelopes",
+    "category": "addressing",
+    "label": "Plain envelopes only",
+    "description": "White or manila envelopes with no stickers, tape, drawings, or coloured ink.",
+    "retiredAt": null
+   },
+   {
+    "id": 40,
+    "tag": "no_glitter_or_stickers",
+    "category": "content",
+    "label": "No glitter or stickers",
+    "description": "Letters decorated with glitter, stickers or tape are returned to sender.",
+    "retiredAt": null
+   },
+   {
+    "id": 19,
+    "tag": "no_photos",
+    "category": "photos",
+    "label": "No pictures",
+    "description": "Letters must be text only; photographs and printed images are returned.",
+    "retiredAt": null
+   },
+   {
+    "id": 23,
+    "tag": "no_enclosures",
+    "category": "enclosures",
+    "label": "Nothing enclosed",
+    "description": "Nothing may be enclosed with a letter: no stamps, cash, cards, or objects of any kind.",
+    "retiredAt": null
+   },
+   {
+    "id": 33,
+    "tag": "mail_read_by_staff",
+    "category": "handling",
+    "label": "Mail opened and read",
+    "description": "All incoming mail except legal mail is opened and read by staff before delivery.",
+    "retiredAt": null
+   }
+  ],
+  "prisoners": [
+   {
+    "id": 1,
+    "birthName": "John Smith",
+    "chosenName": "Jane Smith",
+    "aliases": null,
+    "prison": 1,
+    "country": "United States",
+    "inmateID": "1",
+    "releaseDate": "2029-04-05T23:24:24.819Z",
+    "detainedSince": null,
+    "sentence": null,
+    "charges": null,
+    "estimatedRelease": null,
+    "bio": "Test bio here",
+    "interests": [
+     "writing",
+     "solidarity"
+    ],
+    "photoUrl": null,
+    "supportWebsite": null,
+    "donationInfo": null,
+    "status": "incarcerated",
+    "statusNotice": null,
+    "featured": true,
+    "verifiedBy": null,
+    "verifiedAt": null,
+    "recordStatus": "published",
+    "createdAt": "2026-09-17T21:25:48.524Z",
+    "updatedAt": "2026-09-17T22:17:02.920Z"
+   }
+  ],
+  "relay_groups": [
+   {
+    "id": 1,
+    "name": "Test Chapter",
+    "location": {
+     "street": "123 Chapter Street"
+    },
+    "subregion": "Portland, OR",
+    "country": "United States",
+    "about": "A test chapter used by the seed data.",
+    "website": null,
+    "email": null,
+    "socialLinks": null,
+    "services": [
+     "letter_collection",
+     "letter_writing_nights",
+     "domestic_mailing"
+    ],
+    "announcement": "Letter-writing night every second Thursday at the Red & Black.",
+    "publicKey": null,
+    "keyVersion": 0,
+    "keyRotatedAt": null,
+    "networkRole": "both",
+    "accountStatus": "active",
+    "vouchedBy": null,
+    "prisoners": null,
+    "lettersSent": null,
+    "averageTimeDays": null,
+    "recordStatus": "published",
+    "createdAt": "2026-09-17T21:25:48.628Z",
+    "updatedAt": "2026-09-17T22:17:02.872Z"
+   }
+  ]
+ },
+ "info": "Success getting prison by ID",
+ "success": true,
+ "status": 200,
+ "name": "prison one"
+}

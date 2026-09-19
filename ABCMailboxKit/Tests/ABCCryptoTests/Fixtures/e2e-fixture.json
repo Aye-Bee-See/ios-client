@@ -1,0 +1,67 @@
+{
+ "password": "pässwörd-密码-пароль",
+ "passwordDecomposed": "pässwörd-密码-пароль",
+ "recoveryCode": "DJ69G5K7XBMYFWW4P4PYTJ8C",
+ "recoveryCodeAsTyped": "dj69-g5k7 xbmy-fww4-p4py-tj8c",
+ "publicKey": "MfS+0U7k+Wcxgv7/qJH69O2FzIavVuLGCa69C8FLpzw=",
+ "privateKey": "VoZ0m4xMAzDSgUTAnhbxAd3zqz7csGYh8POinl4KjiQ=",
+ "groupPublicKey": "mTZrGm58d66ufjleSRt/9I8e5kf/7fOMXlWJIkltJ0Y=",
+ "groupPrivateKey": "MYI68UZj6iLeFeWKjh+kJgXZusQPGnjvwthrFwr7d+g=",
+ "passwordWrapped": {
+  "wrapped": "{\"ciphertext\":\"B79dno+VCaA/rg8ZL77vt7cRHS4fNCYTelURBHwl0+jYBX9pRNDBFCIusfZq/G4R\",\"nonce\":\"sPcjZHmC/ZSXRTvoZ+vRO1nMk0KzTuGR\"}",
+  "salt": "+AusesKVbTsPBGpaePCLoA==",
+  "params": {
+   "kdf": "argon2id",
+   "alg": 2,
+   "opslimit": 2,
+   "memlimit": 67108864
+  }
+ },
+ "recoveryWrapped": {
+  "wrapped": "{\"ciphertext\":\"XzEWD29alZ9Lsgn5ZjEJJBf6c5UYof9Odt5wSSNozZXnxNwycVi0uVEN40RUNtMb\",\"nonce\":\"kNHwqDDnXTP6P+oorsMOm5uz4HrHeWho\"}",
+  "salt": "0yyA1iNRQs3NXO7D3cyCzg==",
+  "params": {
+   "kdf": "argon2id",
+   "alg": 2,
+   "opslimit": 2,
+   "memlimit": 67108864
+  }
+ },
+ "letter": {
+  "body": "Dear Bill, the tomatoes are in. Überraschung: ça marche — even with accents.",
+  "note": "Two pages, please.",
+  "ciphertext": "y/0Njs/yHnkYKqIf8kUSOFVTNQIrrxYfS0XCDGavwEHmwufXYnDfc4oPiK9LTynK4MBdqSiiGK8ND3BlJSOZkQn43Mwdi0go/TnyrkJZP0riR/+I6PUHoZMBwGHpSZ0Q",
+  "nonce": "s77mdFDA8j70Ph9DaucODB/zQfAZMpAQ",
+  "relayNote": {
+   "ciphertext": "xEUWsEh08ue3Fj2/26ai+23nArbbhD3uUBeDefVcb68i/w==",
+   "nonce": "1B42mRD+ahDWWNhUjJwvb/VA/PLykT+0"
+  },
+  "contentKey": "m1p/aK3lXqLV1k7RDXKKpZxQE/4mrM5DQWGu2ZJpEwc=",
+  "envelopes": [
+   {
+    "readerType": "user",
+    "readerId": 7,
+    "wrappedKey": "BhCUfOXq/UHOWCZi7Fm6xG9o2GjxxuU762c8vvpp0mugG+cOLMEw/Sr4m7WiBK5mvImgxC2uDRna2uVtIkeWoCNoO6QFitXaa3P0xDEFOSI="
+   },
+   {
+    "readerType": "chapter",
+    "readerId": 1,
+    "keyVersion": 1,
+    "wrappedKey": "KWnhpucWEXRRfs0jfKhYmVMuHf2g//QWaVwQbQeVZWnUdTbPm+N6jXsg5/qc9zzTRSRxPUbtuwP3zpSqjHRSImUzVfYbp+XDfuiLmMmvOlg="
+   }
+  ]
+ },
+ "file": {
+  "plain": "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",
+  "ciphertext": "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",
+  "nonce": "hUbjVi6mKQizkbUGsDeO5AVuoWAdo/Ww"
+ },
+ "recovery": {
+  "challenge": "da/yFwnvbGAm7XqH9WvC0BKioHwahCxZxvG2uNUmS0I=",
+  "sealedChallenge": "DcYUOi3WfvtdJFGR0OVqlvKiCFFN1bjBk6Gq+oHhFRZFSM9gOVcBf0HH1fSY13AnMFmPYZiZmdiYOjtMMCAW+6g5Zdpn8iJE6gXIe78WYhM="
+ },
+ "tokenHash": {
+  "token": "DJ69G5K7XBMYFWW4P4PYTJ8C",
+  "sha256": "aa53b2207c1544c2c299adac10532eda7fcf792a5e6d48811838aaf01b661103"
+ }
+}

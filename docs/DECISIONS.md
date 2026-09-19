@@ -1,0 +1,53 @@
+# Decisions
+
+Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
+
+## 2026-09-19: where iOS deliberately differs from Android
+
+The brief was "the same thing as the Android app", so each difference is listed with its reason.
+
+| Android | iOS | Why |
+| --- | --- | --- |
+| Session and key vault in DataStore, AES-GCM under an Android Keystore key | Keychain items, `AfterFirstUnlockThisDeviceOnly` | The Keychain is the encrypted store; wrapping it in a second cipher adds nothing. `ThisDeviceOnly` is `allowBackup="false"`: the items never enter a backup or move to a new phone. |
+| Nothing survives an uninstall | Keychain items do, so the first launch after an install wipes them | Otherwise a reinstall starts out signed in, holding the previous install's private key. `UserDefaults` dies with the app, so its absence marks a fresh install (`AppContainer`). |
+| Drafts in Room, fields encrypted | One small AES-GCM file per draft, key in the Keychain, complete file protection, excluded from backup | The app has no other use for a database. |
+| Offline directory in Room, filtered with SQL | One JSON file read into memory, filtered in Swift | A directory is hundreds of records. What has to match is behaviour, and `OfflineDirectoryTests` mirrors Android's `DirectoryCacheDaoTest` case for case. Written atomically, so a reader sees the old copy or the new one. Revisit if a directory passes about ten thousand records. |
+| Attach with the document picker, or the camera | The same, plus "Choose a photo" | On an iPhone pictures live in Photos, not Files. Whatever comes from Photos or the camera is re-encoded as JPEG, because phones produce HEIC and the API takes JPEG, PNG, WebP and PDF. |
+| The camera needs no permission (system camera through a `FileProvider`) | `NSCameraUsageDescription` | iOS has no permission-free camera hand-off. The button is hidden where there is no camera (the simulator). |
+| Print through `PrintManager` and a `WebView` | `UIPrintInteractionController` with an HTML formatter | The same idea: the system's print panel, so the app needs no printer code. |
+| Open an attachment in another app (`ACTION_VIEW`) | Quick Look, inside the app | A decrypted attachment need not be handed to another app to be read. It can still be shared from the preview. |
+| Copy a token or recovery code to the clipboard | The same, but local-only and expiring after ten minutes | Otherwise Universal Clipboard offers a secret to the person's other devices. |
+| A `Loading` session state while DataStore is read | None | Reading the Keychain is synchronous; the app knows whether it is signed in before the first frame. |
+| Snackbars | A toast above the tab bar | iOS has no snackbar. |
+| Hilt | `AppContainer`, by hand | About fifteen long-lived objects; a DI library would be more to learn than it saves. |
+| `Group`, `Thread`, `Services` | `SupportGroup`, `LetterThread`, `ServiceLabels` | SwiftUI and Foundation already have a `Group` and a `Thread`. |
+| Debug builds allow plain http to any host | Every build allows plain http to local addresses only (`NSAllowsLocalNetworking`) | One Info.plist serves both configurations, and the exception is harmless in release: it cannot reach the internet. A development hostname that is not `localhost`, an IP, or `*.local` needs https. |
+| Emulator reaches the host as `10.0.2.2` | The simulator reaches it as `localhost` | The simulator shares the Mac's network stack. |
+
+Two small things iOS fixes that Android still has: the compose screen reads who is signed in when it needs to rather than when it was built (someone who taps "Write a letter" signed out, then signs in, would otherwise have no drafts and, as a group member, no "writing as" line); and a downloaded end-to-end attachment is found in the cache the second time it is opened (the server can only report the ciphertext's size, which never equals the decrypted file's, so a size comparison alone downloads it again every time).
+
+## 2026-09-19: everything that is not SwiftUI is a Swift package
+
+**Context.** Android keeps crypto in a plain JVM module so that its tests run on the development machine. On Android that was for the crypto only, because libsodium's Android build cannot load on a desktop JVM and the app's tests fake it.
+
+**Decision.** `ABCMailboxKit` holds two libraries: `ABCCrypto` (libsodium) and `ABCCore` (API client, session, repositories, domain). Both build for macOS as well as iOS, so `swift test` runs everything in seconds with no simulator. Because libsodium runs natively on a Mac, the app-level tests use the real crypto against a stub server: a letter in a test is really sealed and really opened.
+
+**Consequences.** Types the views use are `public`; DTOs and requests stay internal to the package, so the views cannot reach past the repositories. View models live in the app target and are not unit tested; they are thin (state, a call, an error sentence) and the logic they call is tested.
+
+## 2026-09-19: libsodium through swift-sodium's `Clibsodium`
+
+**Context.** The contract is libsodium's primitives (X25519 sealed boxes, XChaCha20-Poly1305, Argon2id) and the clients must use the same library family.
+
+**Decision.** Depend on `jedisct1/swift-sodium` (maintained by libsodium's author) and use only its `Clibsodium` product: the prebuilt XCFramework and C headers. `Sodium.swift` calls the C functions directly, by their libsodium names, and is the only file that does.
+
+**Why not the package's Swift wrapper.** Calling C directly keeps the byte handling in view. The Android binding's wrapper hid a bug for non-ASCII passwords (it passed a UTF-16 length as a byte length); here `deriveKey` builds the UTF-8 bytes itself and passes their count.
+
+**Rejected.** CryptoKit (has X25519 and ChaChaPoly, but no XChaCha20, no sealed boxes, no Argon2id). Building libsodium ourselves (a build to maintain, for no gain while a maintained binary exists).
+
+## 2026-09-19: iOS 17 minimum
+
+The Observation framework (`@Observable`) is what makes the core layer's state (`SessionRepository`, `GroupKeyring`, `PagedLoader`) directly readable from SwiftUI with no adapter layer. It needs iOS 17. In 2026 that excludes almost no phone that can run a current browser.
+
+## 2026-09-19: the project file is written by hand, and small
+
+`project.pbxproj` uses Xcode 16's file-system-synchronised group for `ABCMailbox/`: the project lists no source files, so adding a Swift file to that folder needs no project edit and causes no merge conflict. Info.plist is generated from build settings, with `Config/Info.plist` supplying the keys that cannot be (URL scheme, ATS exception, `APIBaseURL = $(API_BASE_URL)`). The API address is a build setting per configuration, as `BuildConfig.API_BASE_URL` is on Android.

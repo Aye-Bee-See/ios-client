@@ -1,0 +1,97 @@
+import ABCCrypto
+import Foundation
+
+// What a support group member does: the print queue, status moves, and the
+// writers the group looks after. Every call needs a `chapter` account whose
+// group is active; otherwise the API answers 403 with a sentence that says
+// which condition failed, and the app shows that sentence as is.
+
+struct StatusRequest: Encodable {
+  let id: Int
+  let status: String
+}
+
+struct WriterRef: Encodable {
+  let writer: Int
+}
+
+struct AddWriterRequest: Encodable {
+  let name: String
+  let email: String?
+  let managerNote: String?
+  // End-to-end only: the keypair the group made for the writer, private half sealed to the group key of that version.
+  var publicKey: String?
+  var orgWrappedPrivateKey: String?
+  var orgKeyVersion: Int?
+}
+
+/// Server mode: send `{writer}` and the token comes back once. End-to-end: the
+/// token is made on the device and only its hash and the key wrapped under it
+/// are sent, so the answer carries just `expiresAt`. Regenerating replaces the previous one.
+struct IssueTokenRequest: Encodable {
+  let writer: Int
+  var tokenHash: String?
+  var claimWrappedPrivateKey: String?
+  var claimSalt: String?
+  var claimKdfParams: KdfParams?
+}
+
+struct GroupKeyRequest: Encodable {
+  let chapter: Int
+  let publicKey: String
+  let wrappedOrgPrivateKey: String
+}
+
+struct MemberKeyRequest: Encodable {
+  let chapter: Int
+  let user: Int
+  let wrappedOrgPrivateKey: String
+}
+
+struct MemberRef: Encodable {
+  let chapter: Int
+  let user: Int
+}
+
+struct AddEnvelopeRequest: Encodable {
+  let message: Int
+  let readerType: String
+  let readerId: Int
+  let wrappedKey: String
+  let keyVersion: Int?
+}
+
+struct MemberKeysDTO: Decodable {
+  let members: [MemberDTO]?
+}
+
+struct MemberDTO: Decodable {
+  let id: Int
+  let username: String?
+  let name: String?
+  let publicKey: String?
+  let holdsGroupKey: Bool?
+}
+
+struct WriterDTO: Decodable {
+  let id: Int
+  let name: String?
+  let username: String?
+  let email: String?
+  let managerNote: String?
+  /// Set on the group's shared anonymous account, which is not a person and cannot be handed off.
+  let anonymousForChapter: Int?
+  let publicKey: String?
+  /// End-to-end only: the writer's private key sealed to the group, while the account is unclaimed.
+  let orgWrappedPrivateKey: String?
+  let claimToken: ClaimTokenStateDTO?
+}
+
+struct ClaimTokenStateDTO: Decodable {
+  let expiresAt: String?
+}
+
+struct IssuedTokenDTO: Decodable {
+  let token: String?
+  let expiresAt: String?
+}
