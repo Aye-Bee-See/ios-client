@@ -72,11 +72,16 @@ struct PrisonerRow: View {
 
   var body: some View {
     let p = prisoner
+    // Where, then when: two lines. On Android these are one line joined by dots, which a phone this
+    // narrow breaks in the middle of "Est. release". The dates use non-breaking spaces, so if they
+    // ever do wrap (large text sizes), they wrap between facts and never inside one.
     let heldAt = p.facility.map { f in "Held at: \(f.name)" + (f.shortLocation.isEmpty ? "" : ", \(f.shortLocation)") }
-    let since = p.detainedSinceYear.map { "Since: \($0)" }
+    let since = p.detainedSinceYear.map { "Since:\u{00A0}\($0)" }
+    let release = "Est.\u{00A0}release:\u{00A0}" + p.releaseSummary.replacingOccurrences(of: " ", with: "\u{00A0}")
+    let dates = [since, release].compactMap { $0 }.joined(separator: "  ·  ")
     RecordRow(
       title: p.name, secondary: p.birthName,
-      subtitle: [heldAt, since, "Est. release: \(p.releaseSummary)"].compactMap { $0 }.joined(separator: "  ·  "),
+      subtitle: [heldAt, dates].compactMap { $0 }.joined(separator: "\n"),
       notice: p.statusNotice, tags: Array(p.interests.prefix(4)), horizontalPadding: horizontalPadding, action: action
     )
   }

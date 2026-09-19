@@ -113,7 +113,13 @@ struct FlowLayout: Layout {
   var spacing: CGFloat = 6
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    arrange(subviews, width: proposal.width ?? .infinity).size
+    let arranged = arrange(subviews, width: proposal.width ?? .infinity)
+    // Claim the whole width on offer, not just what the tags need. Measuring and placing then happen at
+    // the same width, so they always agree on where the lines break. Claiming only the tags' own width
+    // goes wrong by a fraction of a pixel: SwiftUI rounds that width before placing, the last tag no
+    // longer fits, and it wraps onto a line whose height was never reserved (the row below draws over it).
+    let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? arranged.size.width
+    return CGSize(width: width, height: arranged.size.height)
   }
 
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -126,7 +132,8 @@ struct FlowLayout: Layout {
     var origins: [CGPoint] = [], x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
     for subview in subviews {
       let size = subview.sizeThatFits(.unspecified)
-      if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+      // Half a point of tolerance, so a rounding difference never decides a line break.
+      if x > 0, x + size.width > width + 0.5 { x = 0; y += rowHeight + spacing; rowHeight = 0 }
       origins.append(CGPoint(x: x, y: y))
       x += size.width + spacing
       rowHeight = max(rowHeight, size.height)
