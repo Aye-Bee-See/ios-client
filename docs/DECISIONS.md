@@ -2,6 +2,21 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-20: returned and held letters: the phone copies, the person decides
+
+**Context.** API PRs #105 (a `returned` status with a reason, a note, and `resendOf`) and #106 (queued letters held when their prisoner is moved or freed; `release: true` to print one anyway).
+
+**Decisions.**
+
+- *The feed does not say why a letter came back, or who was moved.* Feed sentences end up on lock screens, so they name nobody and quote nothing, as before. "Transferred" next to a notification time is information about a prisoner. The reason is in the conversation.
+- *Sending again copies on the phone, files included.* The server has no copy operation, on purpose. The compose screen loads the returned letter's text, relay note and attachments (downloaded, decrypted where needed, staged again) and sends a new letter with `resendOf`. The relay group is deliberately not copied: the point of routing afresh is that the person may be somewhere else. A file that cannot be fetched is named, and the letter can still be sent without it.
+- *For `reseal_needed`, send first and delete second.* The API describes it as "delete and send again". In that order a failure in between loses the letter from the server; in this order it leaves two, one of them visibly held and deletable. For the same reason this path does not fall back to the outbox: queued offline, the new letter might go out days later while the held one is still there, and nothing would remove it.
+- *Printing a held letter takes a different button and a confirmation.* The API made it a flag so that it is a decision; a client that always sent `release: true` would undo that. The flag is sent only from the confirmation. A `LetterHeldError` on an ordinary "Mark as printed" means the hold is newer than the screen: reload and show it, never retry with the flag.
+- *The return note's limit and its warning are on the phone.* 200 characters is checked before sending. The sheet says the note is read by the writer and is not encrypted in any mode, because a volunteer used to end-to-end letters would otherwise assume it is.
+- *Codes this version does not know still mean something.* An unknown return reason reads as "nothing says why"; an unknown hold reason is still a hold, shown as one, and still needs the confirmation to print. Reasons may be added after the groups are asked (the PR says so).
+
+**Not built.** The `addressInDoubt` worklist and the `mail` report on a prisoner edit: the app has no directory editing.
+
 ## 2026-09-20: the phone proves the password before asking for a delete
 
 **Context.** First real use of the delete screen, on the simulator: a wrong password deleted the account. The app had sent the wrong password faithfully; the development server had been started hours before API PR #104 was merged, and its `DELETE /auth/user` handler never reads `password`. It deleted on the token alone, which is what that endpoint did before the PR.

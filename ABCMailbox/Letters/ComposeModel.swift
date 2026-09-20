@@ -56,7 +56,15 @@ final class ComposeModel {
     return isStaff && !editing ? "Anonymous writer" : nil
   }
   // Drafts belong to a writer's own letters; a group's letters for others are not drafted on this phone.
-  private var usesDrafts: Bool { !editing && request.writerId == nil && !recordingReply && request.outboxId == nil && !isStaff }
+  /// The letter this one starts from: one that came back, or one held because it must be sealed again.
+  private var copiedFromId: Int? { request.resendOf ?? request.replaceHeldId }
+  private var usesDrafts: Bool { !editing && request.writerId == nil && !recordingReply && request.outboxId == nil && copiedFromId == nil && !isStaff }
+  /// Said above the editor, so that nobody wonders why a new letter is already written.
+  var startedFrom: String? {
+    if request.resendOf != nil { return "This is the letter that came back. Check where they are now and what the mail room objected to, change what you need to, and send it again." }
+    if request.replaceHeldId != nil { return "This is the letter that was waiting. Sending it seals it to the group that mails to the new facility, and removes the waiting copy." }
+    return nil
+  }
 
   var title: String { recordingReply ? "Record a reply" : editing ? "Edit letter" : "New letter" }
   var sendLabel: String { progress ?? (recordingReply ? "Save reply" : editing ? "Save changes" : "Send letter") }
@@ -89,10 +97,25 @@ final class ComposeModel {
     let resolved = resolveRelay(place)
     var body = "", note = ""
     var selected: Int? = { if case .automatic(let g) = resolved { return g.id } else { return nil } }()
-    var restored = false
+    var restored = false, copyFailed = false
+    var missingFiles: [String] = []
     if let editId = request.editMessageId {
       if let letter = try? await app.container.letters.letter(messageId: editId) {
         body = letter.body; note = letter.relayNote ?? ""; selected = letter.relayGroupId ?? selected
+      }
+    } else if let copyId = copiedFromId {
+      // The server has no "send again": in end-to-end mode it could not read the letter to copy it. The words
+      // and the files are read here and travel again. The relay group is not copied: the facility may have changed.
+      if let letter = try? await app.container.letters.letter(messageId: copyId), !letter.locked {
+        body = letter.body; note = letter.relayNote ?? ""
+        for attachment in letter.attachments {
+          guard let url = try? await app.container.letters.download(attachment), let bytes = try? Data(contentsOf: url),
+            let staged = try? app.container.files.stage(data: bytes, name: attachment.name, mimeType: attachment.mimeType)
+          else { missingFiles.append(attachment.name); continue }
+          attachments.append(staged)
+        }
+      } else {
+        copyFailed = true
       }
     } else if let outboxId = request.outboxId, let queued = app.container.outbox.open(outboxId) {
       body = queued.payload.body; note = queued.payload.relayNote ?? ""; selected = queued.payload.relayChapter ?? selected
@@ -106,7 +129,7 @@ final class ComposeModel {
     prisoner = found; facility = place; relay = resolved
     self.body = body; self.note = note; selectedRelay = selected
     showNote = !note.isEmpty
-    error = found == nil ? "Could not load this prisoner." : nil
+    error = found == nil ? "Could not load this prisoner." : copyFailed ? "Could not read the earlier letter. You can write it again here." : missingFiles.isEmpty ? nil : "These files could not be copied from the earlier letter: \(missingFiles.joined(separator: ", ")). Attach them again if you still have them."
     loading = false
     autosave?.cancel() // loading the text is not an edit
     if restored { app.show("Draft restored.") }
@@ -196,13 +219,14 @@ final class ComposeModel {
           asWriterId: request.replyForUserId ?? request.writerId, fromPrisoner: recordingReply,
           // End-to-end: the server lets a group hold an envelope where it relays for the facility (or manages the writer).
           groupRelaysFacility: staffGroupId.map { id in facility?.relayGroups.contains { $0.id == id } == true } ?? false,
-          idempotencyKey: keyForThisLetter()
+          idempotencyKey: keyForThisLetter(), resendOf: request.resendOf
         )
         do {
           let created = try await letters.send(letter)
           finished()
+          await removeHeldCopy()
           await uploadThen(messageId: created.id, chatId: created.threadId)
-        } catch let e as AppError where e.meansNotReachingOurServer {
+        } catch let e as AppError where e.meansNotReachingOurServer && request.replaceHeldId == nil {
           // No answer is not a reason to lose the evening's letter: it goes to the outbox and is sent when the
           // phone is next online. "No answer" includes a timeout, where the letter may in fact have arrived:
           // the outbox retries under the same Idempotency-Key, so the server returns that letter rather than
@@ -219,6 +243,15 @@ final class ComposeModel {
     } catch {
       sending = false; progress = nil
       self.error = AppError.from(error).userMessage ?? (editing ? "Could not save the letter." : "Could not send the letter.")
+    }
+  }
+
+  /// The new letter exists, sealed for the new facility: the held one it replaces goes. In this order, so
+  /// that a failure in between leaves two letters (one visibly held, and deletable) rather than none.
+  private func removeHeldCopy() async {
+    guard let held = request.replaceHeldId else { return }
+    do { try await app.container.letters.delete(messageId: held) } catch {
+      app.show("The letter was sent, but the waiting copy could not be removed. Delete it in the conversation.")
     }
   }
 

@@ -18,6 +18,8 @@ struct SendMessageRequest: Encodable {
   let user: Int?
   /// Omitted (not null) when unset, so the server resolves the relay group itself.
   let relayChapter: Int?
+  /// The writer's returned letter to the same prisoner that this one replaces (API PR #105). Omitted when nil.
+  var resendOf: Int?
   var relayNote: String?
   var ciphertext: String?
   var nonce: String?
@@ -32,6 +34,12 @@ struct EnvelopeDTO: Codable, Equatable {
   let readerId: Int
   let wrappedKey: String
   let keyVersion: Int?
+}
+
+/// Answers a `choose_relay` hold (API PR #106): nothing about the letter changes except who mails it.
+struct ChooseRelayRequest: Encodable {
+  let id: Int
+  let relayChapter: Int
 }
 
 struct UpdateMessageRequest: Encodable {
@@ -94,12 +102,24 @@ struct MessageDTO: Decodable {
   let relayNoteCiphertext: String?
   let relayNoteNonce: String?
   let envelopes: [EnvelopeDTO]?
+  let returnReason: String?
+  let heldReason: String?
+  let resendOf: Int?
+  let resentAs: [ResentAsDTO]?
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
+    case returnReason, heldReason, resendOf
+    case resentAs = "resent_as"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"
   }
+}
+
+struct ResentAsDTO: Decodable {
+  let id: Int
+  let status: String?
+  let createdAt: String?
 }
 
 struct RelayGroupDTO: Decodable {
@@ -112,6 +132,8 @@ struct StatusHistoryDTO: Decodable {
   let toStatus: String
   let changedBy: Int?
   let createdAt: String?
+  let reason: String?
+  let note: String?
 }
 
 struct AttachmentDTO: Decodable {

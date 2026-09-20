@@ -2,6 +2,8 @@ import Foundation
 
 public enum LetterStatus: String, CaseIterable, Sendable {
   case queued, printed, mailed, received
+  /// The post brought it back (API PR #105). From `mailed` only, and final.
+  case returned
   case unknown = ""
 
   public var key: String { rawValue }
@@ -12,11 +14,75 @@ public enum LetterStatus: String, CaseIterable, Sendable {
     case .printed: return "Printed"
     case .mailed: return "Mailed"
     case .received: return "Received"
+    case .returned: return "Returned"
     case .unknown: return "Unknown"
     }
   }
 
   public static func from(key: String?) -> LetterStatus { key.flatMap { $0.isEmpty ? nil : LetterStatus(rawValue: $0) } ?? .unknown }
+}
+
+/// Why the post brought a letter back. The API sends a code; the words are decided here.
+public enum ReturnReason: String, CaseIterable, Identifiable, Sendable {
+  case refused
+  case ruleViolation = "rule_violation"
+  case transferred, released
+  case badAddress = "bad_address"
+  case unknown
+
+  public var id: String { rawValue }
+  public var key: String { rawValue }
+
+  /// A code this version has never heard of is still a return: it reads as "nothing says why".
+  public static func from(key: String?) -> ReturnReason? { key.flatMap { $0.isEmpty ? nil : ReturnReason(rawValue: $0) ?? .unknown } }
+
+  /// For the volunteer holding the envelope, choosing what happened.
+  public var choice: String {
+    switch self {
+    case .refused: return "Refused, no rule named"
+    case .ruleViolation: return "Broke a mail rule"
+    case .transferred: return "Moved to another facility"
+    case .released: return "No longer held there"
+    case .badAddress: return "Undeliverable as addressed"
+    case .unknown: return "Nothing says why"
+    }
+  }
+
+  /// For the writer, as the end of "It came back: …".
+  public var sentence: String {
+    switch self {
+    case .refused: return "the mail room refused it and named no rule."
+    case .ruleViolation: return "the mail room says it broke one of the facility's mail rules."
+    case .transferred: return "the mail room says they are held somewhere else now."
+    case .released: return "the mail room says they are no longer held there."
+    case .badAddress: return "it could not be delivered as addressed."
+    case .unknown: return "nothing on the envelope says why."
+    }
+  }
+
+  /// The directory may be wrong about where this person is, so sending the same letter again may fail the same way.
+  public var doubtsTheAddress: Bool { self == .transferred || self == .released || self == .badAddress }
+}
+
+/// Why a queued letter is waiting instead of being printed (API PR #106): the person it is for was
+/// moved or freed after it was written. A hold is not a status; the letter stays `queued`.
+public enum HeldReason: String, Sendable {
+  /// Moved to a facility where the writer has to say who mails it.
+  case chooseRelay = "choose_relay"
+  /// Moved, end-to-end mode: sealed to a group that does not serve the new facility. Only the writer's device can seal it again.
+  case resealNeeded = "reseal_needed"
+  case prisonerFree = "prisoner_free"
+  /// A reason this version has never heard of. The letter is held all the same.
+  case other = ""
+
+  public static func from(key: String?) -> HeldReason? { key.flatMap { $0.isEmpty ? nil : HeldReason(rawValue: $0) ?? .other } }
+}
+
+/// A letter sent in place of a returned one.
+public struct Resend: Equatable, Identifiable, Sendable {
+  public let id: Int
+  public let status: LetterStatus
+  public let createdAt: Date?
 }
 
 public struct Attachment: Equatable, Identifiable, Sendable {
@@ -40,6 +106,9 @@ public struct StatusChange: Equatable, Sendable {
   public let to: LetterStatus
   public let at: Date?
   public let byUserId: Int?
+  /// For a move to `returned`: why, and a few words from whoever handled the envelope.
+  public var reason: ReturnReason? = nil
+  public var note: String? = nil
 }
 
 public struct Letter: Equatable, Identifiable, Sendable {
@@ -64,6 +133,20 @@ public struct Letter: Equatable, Identifiable, Sendable {
   /// writer it is a reply recorded while they had no keys; a member of their group adds their envelope the
   /// next time one signs in (API PR #95). Not an empty letter, and not a lost one.
   public var awaitingShare: Bool = false
+  /// Why a `returned` letter came back; nil otherwise.
+  public var returnReason: ReturnReason? = nil
+  /// Why this queued letter is held; nil when it is not.
+  public var heldReason: HeldReason? = nil
+  /// The returned letter this one was sent again for.
+  public var resendOf: Int? = nil
+  /// For a returned letter: what was sent in its place, if anything.
+  public var resentAs: [Resend] = []
+
+  public var isHeld: Bool { status == .queued && heldReason != nil }
+  /// What the group wrote when it recorded the return. Never encrypted, in any mode.
+  public var returnNote: String? { history.last { $0.to == .returned }?.note }
+  /// A returned letter of one's own can be sent again, once.
+  public var canSendAgain: Bool { !fromPrisoner && status == .returned && resentAs.isEmpty }
 
   /// The brief's rule: a writer may edit or delete only while the letter is queued.
   public var canEdit: Bool { !fromPrisoner && status == .queued }

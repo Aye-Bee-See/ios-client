@@ -28,9 +28,11 @@ public struct OutboxPayload: Codable, Equatable, Sendable {
   /// Made when the letter is queued (or carried over from the compose screen's failed attempt) and sent with
   /// every try. It is what lets the server answer "I already have that one" instead of mailing a second copy.
   public let idempotencyKey: String
+  /// Optional so that letters queued by a version from before API PR #105 still open.
+  public var resendOf: Int? = nil
 
   var newLetter: NewLetter {
-    NewLetter(prisonerId: prisonerId, body: body, relayNote: relayNote, relayChapter: relayChapter, asWriterId: asWriterId, fromPrisoner: fromPrisoner, groupRelaysFacility: groupRelaysFacility, idempotencyKey: idempotencyKey)
+    NewLetter(prisonerId: prisonerId, body: body, relayNote: relayNote, relayChapter: relayChapter, asWriterId: asWriterId, fromPrisoner: fromPrisoner, groupRelaysFacility: groupRelaysFacility, idempotencyKey: idempotencyKey, resendOf: resendOf)
   }
 }
 
@@ -164,7 +166,7 @@ public final class OutboxRepository {
     let payload = OutboxPayload(
       prisonerId: letter.prisonerId, prisonerName: prisonerName, writingAs: writingAs, body: letter.body, relayNote: letter.relayNote, relayChapter: letter.relayChapter,
       asWriterId: letter.asWriterId, fromPrisoner: letter.fromPrisoner, groupRelaysFacility: letter.groupRelaysFacility, attachments: stored,
-      idempotencyKey: letter.idempotencyKey ?? UUID().uuidString
+      idempotencyKey: letter.idempotencyKey ?? UUID().uuidString, resendOf: letter.resendOf
     )
     write(Entry(id: id, payload: payload, queuedAt: Date()), userId)
     reload()

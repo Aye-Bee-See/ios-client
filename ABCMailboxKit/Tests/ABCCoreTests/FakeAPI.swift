@@ -87,11 +87,31 @@ final class FakeAPI: @unchecked Sendable {
 
   /// Something happened that `user` should hear about.
   func tell(_ user: Int, _ event: String, chat: Int? = 12, message: Int? = nil, detail: [String: Any]? = nil) {
+    lock.withLock { tellLocked(user, event, chat: chat, message: message, detail: detail) }
+  }
+
+  /// For the routes, which already run under the lock.
+  private func tellLocked(_ user: Int, _ event: String, chat: Int?, message: Int?, detail: [String: Any]?) {
+    nextNotification += 1
+    notifications[user, default: []].insert(["id": nextNotification, "event": event, "chat": chat ?? NSNull(), "message": message ?? NSNull(), "submission": NSNull(), "detail": detail ?? NSNull(), "readAt": NSNull(), "createdAt": "2026-09-19T10:00:00.000Z"], at: 0)
+  }
+  /// The directory learned that a prisoner was moved or freed (API PR #106): their queued letters are held
+  /// and everyone who writes to them is told how many of their letters are waiting.
+  func directoryLearns(prisoner: Int, event: String, holding reason: String) {
+    var waiting: [Int: Int] = [:]
     lock.withLock {
-      nextNotification += 1
-      notifications[user, default: []].insert(["id": nextNotification, "event": event, "chat": chat ?? NSNull(), "message": message ?? NSNull(), "submission": NSNull(), "detail": detail ?? NSNull(), "readAt": NSNull(), "createdAt": "2026-09-19T10:00:00.000Z"], at: 0)
+      for i in messages.indices where messages[i]["prisoner"] as? Int == prisoner && messages[i]["status"] as? String == "queued" && messages[i]["sender"] as? String != "prisoner" {
+        messages[i]["heldReason"] = reason
+        waiting[messages[i]["user"] as? Int ?? 0, default: 0] += 1
+      }
+    }
+    let writers = Set(lock.withLock { messages.filter { $0["prisoner"] as? Int == prisoner }.compactMap { $0["user"] as? Int } })
+    for writer in writers {
+      let detail: [String: Any] = event == "prisoner.moved" ? ["prisoner": prisoner, "prison": 2, "held": waiting[writer] ?? 0] : ["prisoner": prisoner, "status": "free", "held": waiting[writer] ?? 0]
+      tell(writer, event, chat: prisoner, detail: detail)
     }
   }
+
   private func caller(_ r: Recorded) -> Account? {
     guard let header = r.headers["Authorization"], let id = tokens[String(header.dropFirst("Bearer ".count))] else { return nil }
     return accounts.first { $0.id == id }
@@ -124,6 +144,7 @@ final class FakeAPI: @unchecked Sendable {
       return reader == a.chapterId
     }.map { e in e.filter { $0.key != "keyVersion" } }
     out["attachments"] = attachments.values.map(\.meta).filter { $0["message"] as? Int == m["id"] as? Int }
+    out["resent_as"] = messages.filter { $0["resendOf"] as? Int == m["id"] as? Int }.map { ["id": $0["id"] ?? 0, "status": $0["status"] ?? "queued", "createdAt": $0["createdAt"] ?? NSNull()] as [String: Any] }
     return out
   }
 
@@ -310,7 +331,15 @@ final class FakeAPI: @unchecked Sendable {
       for e in body["envelopes"] as? [[String: Any]] ?? [] where e["readerType"] as? String == "user" {
         if accounts.first(where: { $0.id == e["readerId"] as? Int })?.keys["publicKey"] == nil { return .error(400, extra: ["errors": ["That writer has no public key."]]) }
       }
+      if let replaced = body["resendOf"] as? Int {
+        // One of the same writer's returned letters to the same prisoner, or a 400 (PR #105).
+        let original = messages.first { $0["id"] as? Int == replaced }
+        guard let original, original["status"] as? String == "returned", original["user"] as? Int == (body["user"] as? Int ?? a.id), original["prisoner"] as? Int == body["prisoner"] as? Int else {
+          return .error(400, extra: ["errors": ["resendOf must be one of this writer's returned letters to the same prisoner."]])
+        }
+      }
       var m = body
+      m["heldReason"] = nil; m["returnReason"] = nil // read-only: nobody sets a hold by writing a letter
       m["id"] = id(); m["chat"] = 7; m["status"] = body["sender"] as? String == "prisoner" ? "received" : "queued"
       m["user"] = body["user"] ?? a.id; m["createdAt"] = "2026-09-19T10:00:00.000Z"; m["keep"] = false
       messages.append(m)
@@ -333,22 +362,47 @@ final class FakeAPI: @unchecked Sendable {
 
     case ("PUT", "/messaging/message"):
       guard let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
-      messages[i].merge(body) { $1 }
+      // Nobody sets or clears a hold by editing; choosing who mails it answers a choose_relay hold (PR #106).
+      messages[i].merge(body.filter { $0.key != "heldReason" && $0.key != "returnReason" }) { $1 }
+      if body["relayChapter"] is Int, messages[i]["heldReason"] as? String == "choose_relay" { messages[i]["heldReason"] = nil }
       for k in ["relayNoteCiphertext", "relayNoteNonce"] where body[k] == nil && body["ciphertext"] != nil { messages[i][k] = nil }
       return .data([:])
 
     case ("GET", "/messaging/messages"):
       guard let a = caller(r) else { return .error(401, info: "Sign in.") }
-      let rows = messages.filter { $0["relayChapter"] as? Int == r.query["relayChapter"].flatMap(Int.init) && $0["status"] as? String == r.query["status"] }
+      let rows = messages.filter { m in
+        guard m["relayChapter"] as? Int == r.query["relayChapter"].flatMap(Int.init) else { return false }
+        if let status = r.query["status"], m["status"] as? String != status { return false }
+        if let held = r.query["held"], (m["heldReason"] is String) != (held == "true") { return false }
+        return true
+      }
       return .data(rows.map { visible($0, to: a) }, extra: ["total": rows.count, "page": 1, "page_size": 20])
 
     case ("PUT", "/messaging/status"):
       guard let a = caller(r), let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
-      let order = ["queued", "printed", "mailed"], from = messages[i]["status"] as? String ?? "", to = body["status"] as? String ?? ""
+      let order = ["queued", "printed", "mailed", "returned"], from = messages[i]["status"] as? String ?? "", to = body["status"] as? String ?? ""
+      let reason = body["reason"] as? String, note = body["note"] as? String
+      if to == "returned" {
+        guard let reason, ["refused", "rule_violation", "transferred", "released", "bad_address", "unknown"].contains(reason) else { return .error(400, extra: ["errors": ["A returned letter needs a reason."]]) }
+        if (note ?? "").count > 200 { return .error(400, extra: ["errors": ["note can be at most 200 characters."]]) }
+      } else if reason != nil || note != nil {
+        return .error(400, extra: ["errors": ["reason and note only go with the status returned."]])
+      }
       guard let f = order.firstIndex(of: from), let t = order.firstIndex(of: to), t == f + 1 else {
         return .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "A \(from) letter cannot move to \(to)."])
       }
-      messages[i]["status"] = to
+      if let held = messages[i]["heldReason"] as? String, body["release"] as? Bool != true {
+        return .error(409, info: "Error updating letter status.", extra: ["name": "LetterHeldError", "error": "This letter is held (\(held)). Send release: true to go ahead with it anyway."])
+      }
+      messages[i]["status"] = to; messages[i]["heldReason"] = nil; messages[i]["returnReason"] = to == "returned" ? reason : nil
+      var history = messages[i]["status_history"] as? [[String: Any]] ?? []
+      history.append(["fromStatus": from, "toStatus": to, "changedBy": a.id, "createdAt": "2026-09-20T10:00:00.000Z", "reason": (to == "returned" ? reason : nil) ?? NSNull(), "note": note ?? NSNull()])
+      messages[i]["status_history"] = history
+      if let writer = messages[i]["user"] as? Int {
+        var detail: [String: Any] = ["status": to]
+        if to == "returned", let reason { detail["reason"] = reason }
+        tellLocked(writer, "letter.status", chat: messages[i]["chat"] as? Int, message: messages[i]["id"] as? Int, detail: detail)
+      }
       return .data(visible(messages[i], to: a))
 
     case ("GET", "/messaging/envelopes/missing"):

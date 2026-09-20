@@ -47,10 +47,12 @@ public final class GroupRepository {
 
   /// Letters the group relays, in one status. Each comes with the prisoner, for addressing.
   public func queue(groupId: Int, status: LetterStatus, page: Int, pageSize: Int) async throws -> Page<QueueItem> {
+    try await queue(groupId: groupId, query: [("status", status.key)], page: page, pageSize: pageSize)
+  }
+
+  private func queue(groupId: Int, query: [(String, String?)], page: Int, pageSize: Int) async throws -> Page<QueueItem> {
     await codec.ready()
-    let envelope: APIEnvelope<[MessageDTO]> = try await api.get("messaging/messages", query: [
-      ("relayChapter", String(groupId)), ("status", status.key), ("page", String(page)), ("page_size", String(pageSize)),
-    ])
+    let envelope: APIEnvelope<[MessageDTO]> = try await api.get("messaging/messages", query: [("relayChapter", String(groupId))] + query + [("page", String(page)), ("page_size", String(pageSize))])
     let page: Page<MessageDTO> = envelope.toPage()
     var items: [QueueItem] = []
     for dto in page.items { items.append(QueueItem(letter: codec.incoming(dto), prisoner: await prisoner(dto.prisoner))) }
@@ -65,10 +67,33 @@ public final class GroupRepository {
   }
 
   /// Forward only: queued, printed, mailed. Anything else is a 409 whose sentence says why.
-  public func setStatus(messageId: Int, status: LetterStatus) async throws -> Letter {
+  ///
+  /// `release`: the letter is held (the person was moved or freed after it was written) and is being
+  /// printed all the same. Without it the API answers 409 `LetterHeldError`, so that printing a held
+  /// letter is a decision and not an oversight (API PR #106).
+  public func setStatus(messageId: Int, status: LetterStatus, release: Bool = false) async throws -> Letter {
+    try await move(StatusRequest(id: messageId, status: status.key, release: release ? true : nil))
+  }
+
+  /// The post brought a mailed letter back (API PR #105). `note` is what the envelope said, 200 characters
+  /// at most; the writer reads it and it is not encrypted in any mode, so nothing about the letter belongs in it.
+  public func markReturned(messageId: Int, reason: ReturnReason, note: String?) async throws -> Letter {
+    let words = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard words.count <= Self.returnNoteLimit else { throw AppError.validation(["The note can be at most \(Self.returnNoteLimit) characters."]) }
+    return try await move(StatusRequest(id: messageId, status: LetterStatus.returned.key, reason: reason.key, note: words.isEmpty ? nil : words))
+  }
+
+  public static let returnNoteLimit = 200
+
+  private func move(_ request: StatusRequest) async throws -> Letter {
     await codec.ready()
-    let envelope: APIEnvelope<MessageDTO> = try await api.send("PUT", "messaging/status", body: StatusRequest(id: messageId, status: status.key))
+    let envelope: APIEnvelope<MessageDTO> = try await api.send("PUT", "messaging/status", body: request)
     return codec.incoming(try envelope.required("letter"))
+  }
+
+  /// Queued letters of this group that are held, whatever the reason.
+  public func held(groupId: Int, page: Int, pageSize: Int) async throws -> Page<QueueItem> {
+    try await queue(groupId: groupId, query: [("held", "true")], page: page, pageSize: pageSize)
   }
 
   private func writerRows() async throws -> [WriterDTO] {

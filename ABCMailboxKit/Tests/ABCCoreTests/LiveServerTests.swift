@@ -193,5 +193,125 @@ final class LiveServerTests: XCTestCase {
     XCTAssertNil(app.drafts.load(userId: 3, prisonerId: prisoner.id))
     await assertThrowsAppError(try await app.sessions.login(username: "user3", password: "password3")) { XCTAssertTrue($0.isUnauthorized, "the account is gone: \($0)") }
   }
-}
 
+  // MARK: Returned mail, moved and freed (API PRs #105 and #106)
+
+  /// What a network admin does in the dashboard, which this app has no screens for: the test needs someone
+  /// to move and free a prisoner. Plain requests, so that nothing of the app is involved in the set-up.
+  private struct Admin {
+    let base: URL
+    let token: String
+
+    static func signIn(_ base: String) async throws -> Admin {
+      let url = try XCTUnwrap(URL(string: base.hasSuffix("/") ? base : base + "/"))
+      let answer = try await call(url, "POST", "auth/login", ["username": "admin", "password": "abcpassword"], token: nil)
+      let token = try XCTUnwrap(((answer["data"] as? [String: Any])?["token"] as? [String: Any])?["token"] as? String, "the throwaway server needs ADMIN_PASSWORD=abcpassword, as tools/dev-seed.py expects")
+      return Admin(base: url, token: token)
+    }
+
+    @discardableResult func put(_ path: String, _ body: [String: Any]) async throws -> [String: Any] { try await Self.call(base, "PUT", path, body, token: token) }
+
+    private static func call(_ base: URL, _ method: String, _ path: String, _ body: [String: Any], token: String?) async throws -> [String: Any] {
+      var request = URLRequest(url: base.appendingPathComponent(path))
+      request.httpMethod = method
+      request.httpBody = try JSONSerialization.data(withJSONObject: body)
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+      let (data, response) = try await URLSession.shared.data(for: request)
+      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      if !(200..<300).contains(status) { throw AppError.unexpected("admin \(method) \(path) -> \(status): \(json)") }
+      return json
+    }
+  }
+
+  /// The three stories of API PRs #105 and #106, against a real API, from the writer's phone and the group
+  /// member's. It moves letters through their lifecycle and edits the directory, so like the test above it
+  /// only runs against a throwaway server and refuses the usual development ports:
+  ///
+  ///     # a throwaway API at PR #106 or later, seeded, with ADMIN_PASSWORD=abcpassword, then:
+  ///     python3 ../../Android/tools/dev-seed.py http://localhost:3199   # member1, relay links
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerReturnedMovedAndFreed
+  ///
+  /// Server mode. In end-to-end mode a move holds letters as `reseal_needed` instead of `choose_relay`.
+  func testThrowawayServerReturnedMovedAndFreed() async throws {
+    let writer = try container("ABC_LIVE_THROWAWAY"), member = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test edits its directory") }
+    await writer.modes.refresh(); await member.modes.refresh()
+    try XCTSkipIf(writer.modes.mode == .e2e, "written for server mode")
+    let admin = try await Admin.signIn(base)
+    try await writer.sessions.login(username: "user1", password: "password1")
+    try await member.sessions.login(username: "member1", password: "password1")
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    await writer.activity.sync() // whatever the seed left in the feed is not this test's news
+
+    // 1. Returned. dev-seed: prison 1 has one relay group, member1's, so the server picks it.
+    let first = try await writer.letters.send(NewLetter(prisonerId: 1, body: "The tomatoes are in.", relayNote: nil, relayChapter: nil))
+    XCTAssertEqual(first.relayGroupId, groupId)
+    _ = try await member.group.setStatus(messageId: first.id, status: .printed)
+    _ = try await member.group.setStatus(messageId: first.id, status: .mailed)
+    await assertThrowsAppError(try await writer.letters.send(NewLetter(prisonerId: 1, body: "Too early", relayNote: nil, relayChapter: nil, resendOf: first.id))) {
+      print("live #105: sending a mailed letter again is refused with: \($0)")
+      guard case .validation = $0 else { return XCTFail("expected a 400, got \($0)") }
+    }
+    let back = try await member.group.markReturned(messageId: first.id, reason: .transferred, note: "Stamped NOT HERE")
+    XCTAssertEqual(back.status, .returned); XCTAssertEqual(back.returnReason, .transferred); XCTAssertEqual(back.returnNote, "Stamped NOT HERE")
+    let returnedList = try await member.group.queue(groupId: groupId, status: .returned, page: 1, pageSize: 50)
+    XCTAssertTrue(returnedList.items.contains { $0.id == first.id })
+
+    var news = await writer.activity.sync()
+    print("live #105: the writer's feed says: \(news.map(\.sentence))")
+    XCTAssertEqual(news.first?.kind, .returned); XCTAssertEqual(news.first?.messageId, first.id)
+    let cameBack = try await writer.letters.letter(messageId: first.id)
+    XCTAssertEqual(cameBack.returnReason, .transferred); XCTAssertEqual(cameBack.returnNote, "Stamped NOT HERE"); XCTAssertTrue(cameBack.canSendAgain); XCTAssertFalse(cameBack.canEdit)
+    let again = try await writer.letters.send(NewLetter(prisonerId: 1, body: cameBack.body, relayNote: nil, relayChapter: nil, resendOf: first.id))
+    XCTAssertEqual(again.resendOf, first.id); XCTAssertEqual(again.status, .queued)
+    let replaced = try await writer.letters.letter(messageId: first.id)
+    XCTAssertEqual(replaced.resentAs.map(\.id), [again.id]); XCTAssertFalse(replaced.canSendAgain)
+    let thread = try await writer.letters.thread(chatId: try XCTUnwrap(again.threadId))
+    XCTAssertEqual(thread.letters.first { $0.id == first.id }?.returnReason, .transferred, "a thread's letters carry the reason too")
+
+    // 2. Freed. The letter just sent again is queued for member1's group; the directory learns they are out.
+    try await admin.put("prisoner/prisoner", ["id": 1, "status": "free"])
+    news = await writer.activity.sync()
+    print("live #106: after the release the writer's feed says: \(news.map(\.sentence))")
+    XCTAssertEqual(news.first?.kind, .freed(held: 1))
+    let waiting = try await writer.letters.letter(messageId: again.id)
+    XCTAssertEqual(waiting.heldReason, .prisonerFree); XCTAssertTrue(waiting.isHeld); XCTAssertTrue(waiting.canEdit)
+    let held = try await member.group.held(groupId: groupId, page: 1, pageSize: 50)
+    XCTAssertTrue(held.items.contains { $0.id == again.id })
+    await assertThrowsAppError(try await member.group.setStatus(messageId: again.id, status: .printed)) {
+      print("live #106: printing a held letter without saying so is refused with: \($0)")
+      XCTAssertTrue($0.isLetterHeld)
+    }
+    let printed = try await member.group.setStatus(messageId: again.id, status: .printed, release: true)
+    XCTAssertEqual(printed.status, .printed); XCTAssertNil(printed.heldReason)
+
+    // 3. Moved. Prison 4 has no relay group, so a letter there has none. Prison 3 only takes relayed mail;
+    // with a second group attached there is nothing the server can decide for the writer.
+    try await admin.put("prison/relay", ["prison": 3, "chapter": groupId])
+    let direct = try await writer.letters.send(NewLetter(prisonerId: 4, body: "Written before the move.", relayNote: "two pages", relayChapter: nil))
+    XCTAssertNil(direct.relayGroupId)
+    let moved = try await admin.put("prisoner/prisoner", ["id": 4, "prison": 3])
+    print("live #106: the directory edit reports: \((moved["data"] as? [String: Any])?["mail"] ?? moved["mail"] ?? "nothing under mail")")
+    news = await writer.activity.sync()
+    print("live #106: after the move the writer's feed says: \(news.map(\.sentence))")
+    XCTAssertEqual(news.first?.kind, .moved(held: 1))
+    let stuck = try await writer.letters.letter(messageId: direct.id)
+    XCTAssertEqual(stuck.heldReason, .chooseRelay)
+
+    // What the conversation screen does: ask the directory where they are now, and offer those groups.
+    let now = try await writer.directory.prisoner(id: 4)
+    let facility = try await writer.directory.facility(id: try XCTUnwrap(now.facilityId))
+    let options = facility.relayGroups.filter(\.isActive)
+    print("live #106: \(facility.name) is mailed to by \(options.map(\.name))")
+    XCTAssertGreaterThanOrEqual(options.count, 2); XCTAssertTrue(options.contains { $0.id == groupId })
+    try await writer.letters.chooseRelay(messageId: direct.id, groupId: groupId)
+    let chosen = try await writer.letters.letter(messageId: direct.id)
+    XCTAssertNil(chosen.heldReason); XCTAssertEqual(chosen.relayGroupId, groupId); XCTAssertEqual(chosen.body, "Written before the move."); XCTAssertEqual(chosen.relayNote, "two pages")
+    let queue = try await member.group.queue(groupId: groupId, status: .queued, page: 1, pageSize: 50)
+    XCTAssertTrue(queue.items.contains { $0.id == direct.id }, "the group the writer chose now has it to print")
+    _ = try await member.group.setStatus(messageId: direct.id, status: .printed) // no longer held: no release needed
+  }
+}

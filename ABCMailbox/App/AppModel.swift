@@ -40,6 +40,11 @@ struct ComposeRequest: Hashable {
   var replyForUserId: Int?
   /// Reopen a letter that is waiting in the outbox; sending it again replaces the queued copy.
   var outboxId: String?
+  /// Send a letter that came back again (API PR #105): starts from its text, and the new letter names it.
+  var resendOf: Int?
+  /// A queued letter held as `reseal_needed` (API PR #106): starts from its text, and once the new letter
+  /// is sent, sealed to whoever mails to the new facility, the held one is deleted.
+  var replaceHeldId: Int?
 }
 
 /// Sign-in is a full-screen flow of its own, on top of whichever tab asked for it.

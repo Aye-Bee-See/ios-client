@@ -9,6 +9,11 @@ import Foundation
 struct StatusRequest: Encodable {
   let id: Int
   let status: String
+  /// With `returned` only; the API refuses them on any other move.
+  var reason: String?
+  var note: String?
+  /// Printing a held letter on purpose (API PR #106). Omitted otherwise.
+  var release: Bool?
 }
 
 struct WriterRef: Encodable {

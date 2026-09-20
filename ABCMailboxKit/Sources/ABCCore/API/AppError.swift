@@ -59,6 +59,8 @@ public enum AppError: Error, Equatable, Sendable {
   /// The same Idempotency-Key is being processed right now (a retry racing the original, API PR #97):
   /// wait a second and ask again. Not to be confused with a group's key rotation, which is also a 409.
   public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError") = self { return true } else { return false } }
+  /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
+  public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError") = self { return true } else { return false } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }
   public var isGone: Bool { if case .gone = self { return true } else { return false } }
   /// No connection, or a reply that is not our API's at all. Only these fall back to the saved directory.

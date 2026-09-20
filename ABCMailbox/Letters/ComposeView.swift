@@ -63,6 +63,7 @@ struct ComposeView: View {
       if let p = model.prisoner {
         Text(model.recordingReply ? "From: \(p.name)" : "To: \(p.name)").font(Theme.titleLarge)
         if let who = model.writingAs { Text("Writing as: \(who)").font(Theme.bodyMedium).foregroundStyle(Theme.red) }
+        if let why = model.startedFrom { Muted(why) }
         if model.recordingReply { Muted("Type what the prisoner wrote, attach a scan or a photo of the letter, or both. The writer will see it in their thread.") }
         if let f = model.facility { Muted(f.name + (f.shortLocation.isEmpty ? "" : ", \(f.shortLocation)"), font: Theme.bodyLarge) }
       }

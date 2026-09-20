@@ -68,6 +68,13 @@ public final class LettersRepository {
     try await api.send("PUT", "messaging/message", body: request)
   }
 
+  /// Answers a `choose_relay` hold: the person was moved to a facility where the writer has to say who
+  /// mails the letter. Only the relay group changes, and the server lifts the hold (API PR #106).
+  /// Server mode only: in end-to-end mode the hold is `reseal_needed` instead.
+  public func chooseRelay(messageId: Int, groupId: Int) async throws {
+    try await api.send("PUT", "messaging/message", body: ChooseRelayRequest(id: messageId, relayChapter: groupId))
+  }
+
   public func delete(messageId: Int) async throws {
     try await api.send("DELETE", "messaging/message", body: IdBody(id: messageId))
   }

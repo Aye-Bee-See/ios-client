@@ -54,7 +54,9 @@ public final class ActivityRepository {
     let fresh = entries.filter { $0.readAt == nil }.map { e -> Activity in
       var status: String?
       if case .string(let s)? = e.detail?["status"] { status = s }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status), chatId: e.chat, messageId: e.message)
+      var held = 0
+      if case .number(let n)? = e.detail?["held"] { held = Int(n) }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held), chatId: e.chat, messageId: e.message)
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
     if announce, let summary = ActivitySummary(fresh) { notifier?.show(summary, unread: unread) }

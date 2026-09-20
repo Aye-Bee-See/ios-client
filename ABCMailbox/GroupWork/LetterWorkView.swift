@@ -35,8 +35,28 @@ final class LetterWorkModel {
     }
   }
 
+  /// The post brought it back (API PR #105). The writer is told why, and can send it again.
+  func markReturned(reason: ReturnReason, note: String) async -> Bool {
+    guard var current = item.value else { return false }
+    busy = true
+    defer { busy = false }
+    do {
+      var updated = try await app.container.group.markReturned(messageId: messageId, reason: reason, note: note)
+      updated.attachments = current.letter.attachments
+      current.letter = updated
+      item = .loaded(current)
+      app.show("Recorded as returned. The writer has been told.")
+      return true
+    } catch {
+      app.show(AppError.from(error).userMessage ?? "Could not record the return.")
+      return false
+    }
+  }
+
   /// The lifecycle only moves forward; the API refuses anything else and its sentence is shown.
-  func advance() async {
+  ///
+  /// `release`: the letter is held and is being printed all the same, which the screen has just asked about.
+  func advance(release: Bool = false) async {
     guard var current = item.value else { return }
     let next: LetterStatus
     switch current.letter.status {
@@ -47,11 +67,15 @@ final class LetterWorkModel {
     busy = true
     defer { busy = false }
     do {
-      var updated = try await app.container.group.setStatus(messageId: messageId, status: next)
+      var updated = try await app.container.group.setStatus(messageId: messageId, status: next, release: release)
       updated.attachments = current.letter.attachments // the status answer does not repeat them
       current.letter = updated
       item = .loaded(current)
       app.show("Marked as \(next.label.lowercased()).")
+    } catch let e as AppError where e.isLetterHeld {
+      // Held since this screen loaded: the person was moved or freed in the meantime. Show it, and let them decide.
+      await load()
+      app.show("This letter has been held since you opened it. Read why before printing it.")
     } catch {
       app.show(AppError.from(error).userMessage ?? "Could not update the letter.")
     }
@@ -68,6 +92,8 @@ final class LetterWorkModel {
 struct LetterWorkView: View {
   @State private var model: LetterWorkModel
   @State private var confirmMailed = false
+  @State private var confirmRelease = false
+  @State private var recordReturn = false
   @State private var choosePartner = false
   private let app: AppModel
 
@@ -88,6 +114,15 @@ struct LetterWorkView: View {
       } message: {
         Text("Do this once the letter is actually in the post. The writer will see it as mailed, and it cannot be moved back.")
       }
+      .confirmationDialog("Print it anyway?", isPresented: $confirmRelease, titleVisibility: .visible) {
+        Button("Print it anyway") { Task { await model.advance(release: true) } }
+        Button("Leave it waiting", role: .cancel) {}
+      } message: {
+        Text("This lifts the hold. Do it only if your group knows the letter will reach them where it is going.")
+      }
+      .sheet(isPresented: $recordReturn) {
+        ReturnSheet(groupName: app.user?.displayName) { reason, note in await model.markReturned(reason: reason, note: note) }
+      }
       .confirmationDialog("Share with a partner group", isPresented: $choosePartner, titleVisibility: .visible) {
         ForEach(model.partners) { g in Button(g.name) { Task { await model.share(with: g) } } }
         Button("Cancel", role: .cancel) {}
@@ -103,6 +138,7 @@ struct LetterWorkView: View {
         Tag(text: letter.status.label)
         if let at = letter.createdAt { Muted("Written \(Format.long(at))") }
       }
+      if let reason = letter.heldReason, letter.isHeld { AlertBanner(Self.heldText(reason)) }
       envelope(letter, p)
       if let note = letter.relayNote { AlertBanner("Note from the writer: \(note)") }
       if let f = p?.facility {
@@ -122,18 +158,39 @@ struct LetterWorkView: View {
         Button("Print the letter") { PrintLetter.print(jobName: "Letter to \(p?.name ?? "prisoner")", body: letter.body) }.buttonStyle(.outlineWide)
       }
       switch letter.status {
-      case .queued: Button("Mark as printed") { Task { await model.advance() } }.buttonStyle(.primary).accessibilityIdentifier("advance")
+      case .queued:
+        if letter.isHeld {
+          // Printing a held letter is a decision, never an oversight: the API wants it said, and so does this screen.
+          Button("Print it anyway…") { confirmRelease = true }.buttonStyle(.outlineWide).accessibilityIdentifier("release")
+        } else {
+          Button("Mark as printed") { Task { await model.advance() } }.buttonStyle(.primary).accessibilityIdentifier("advance")
+        }
       case .printed: Button("Mark as mailed") { confirmMailed = true }.buttonStyle(.primary).accessibilityIdentifier("advance")
-      case .mailed: Muted("Mailed\(letter.statusChangedAt.map { " on \(Format.long($0))" } ?? ""). Nothing more to do.", font: Theme.bodyLarge)
+      case .mailed:
+        Muted("Mailed\(letter.statusChangedAt.map { " on \(Format.long($0))" } ?? "").", font: Theme.bodyLarge)
+        Button("It came back…") { recordReturn = true }.buttonStyle(.outlineWide).accessibilityIdentifier("returned")
+      case .returned:
+        Muted("Came back\(letter.statusChangedAt.map { " on \(Format.long($0))" } ?? ""): \((letter.returnReason ?? .unknown).choice.lowercased()). The writer has been told and can send it again.", font: Theme.bodyLarge)
+        if let note = letter.returnNote { Muted("Your group's note: \(note)") }
       default: EmptyView()
       }
       // End-to-end only, and only where the facility has another relay group: the server permits no other readers.
-      if !model.partners.isEmpty, !letter.locked, letter.status != .mailed {
+      if !model.partners.isEmpty, !letter.locked, letter.status != .mailed, letter.status != .returned {
         Button("Share with a partner group") { choosePartner = true }.buttonStyle(.outlineWide)
       }
       if let threadId = letter.threadId { Button("Open the conversation") { app.push(.thread(chatId: threadId)) }.buttonStyle(.link) }
     }
     .disabled(model.busy)
+  }
+
+  /// What a hold means for the person at the printer.
+  static func heldText(_ reason: HeldReason) -> String {
+    switch reason {
+    case .prisonerFree: return "Held: they have been released since this was written. Posted to a prison they have left, it may never reach them. Print it only if your group knows it will."
+    case .chooseRelay: return "Held: they were moved, and the writer has not yet chosen who mails this letter."
+    case .resealNeeded: return "Held: they were moved to a facility your group does not mail to. The writer has been asked to send it again, to the group that does."
+    case .other: return "Held: something changed for this person after the letter was written. Check their page before printing it."
+    }
   }
 
   /// The envelope: name, number, facility, address. Selectable so it can be copied to a label app.
@@ -150,6 +207,52 @@ struct LetterWorkView: View {
     }
     .padding(14).frame(maxWidth: .infinity, alignment: .leading)
     .background(Theme.paperRaised, in: RoundedRectangle(cornerRadius: 4))
+  }
+}
+
+/// Recording that the post brought a letter back: what happened, and optionally what the envelope said.
+private struct ReturnSheet: View {
+  let groupName: String?
+  let save: (ReturnReason, String) async -> Bool
+  @Environment(\.dismiss) private var dismiss
+  @State private var reason: ReturnReason?
+  @State private var note = ""
+  @State private var saving = false
+
+  private var tooLong: Bool { note.trimmingCharacters(in: .whitespacesAndNewlines).count > GroupRepository.returnNoteLimit }
+
+  var body: some View {
+    NavigationStack {
+      Screen {
+        Muted("The writer is told that the letter came back, and why. It cannot be undone.", font: Theme.bodyLarge)
+        SectionTitle("What happened")
+        ForEach(ReturnReason.allCases) { r in
+          Button { reason = r } label: {
+            HStack(spacing: 10) {
+              Image(systemName: reason == r ? "largecircle.fill.circle" : "circle").foregroundStyle(reason == r ? Theme.red : Theme.inkMuted)
+              Text(r.choice).font(Theme.bodyLarge).foregroundStyle(Theme.ink)
+              Spacer()
+            }
+            .padding(.vertical, 6).contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityAddTraits(reason == r ? .isSelected : [])
+        }
+        SectionTitle("What the envelope said (optional)")
+        TextField("For example: Stamped NOT HERE", text: $note, axis: .vertical).lineLimit(2...4).font(Theme.bodyLarge)
+          .padding(10).background(Theme.paperRaised, in: RoundedRectangle(cornerRadius: 4))
+        Text("\(note.trimmingCharacters(in: .whitespacesAndNewlines).count) of \(GroupRepository.returnNoteLimit)").font(Theme.label).foregroundStyle(tooLong ? Theme.red : Theme.inkMuted)
+        AlertBanner("The writer reads this note, and it is not encrypted, even when letters are. Write what the envelope said, and nothing about what the letter said.")
+        Button(saving ? "Saving…" : "Record the return") {
+          guard let reason else { return }
+          Task { saving = true; if await save(reason, note) { dismiss() }; saving = false }
+        }
+        .buttonStyle(.primary).disabled(reason == nil || tooLong || saving).accessibilityIdentifier("recordReturn")
+      }
+      .navigationTitle("It came back")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+    }
   }
 }
 

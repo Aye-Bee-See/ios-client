@@ -16,8 +16,11 @@ public struct NewLetter: Sendable {
   /// Made up once per letter and repeated on every retry of it (API PR #97). A retry of a letter that
   /// did arrive gets that letter back instead of creating a second one for the prisoner.
   public let idempotencyKey: String?
+  /// The writer's returned letter that this one is sent in place of (API PR #105). The server keeps no copy
+  /// to send again (in end-to-end mode it could not read one), so the text travels again from here.
+  public let resendOf: Int?
 
-  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false, idempotencyKey: String? = nil) {
+  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false, idempotencyKey: String? = nil, resendOf: Int? = nil) {
     self.prisonerId = prisonerId
     self.body = body
     self.relayNote = relayNote
@@ -26,6 +29,7 @@ public struct NewLetter: Sendable {
     self.fromPrisoner = fromPrisoner
     self.groupRelaysFacility = groupRelaysFacility
     self.idempotencyKey = idempotencyKey
+    self.resendOf = resendOf
   }
 }
 
@@ -82,7 +86,7 @@ final class LetterCodec {
     // A reply is not relayed anywhere, so it carries no relay group or note.
     let relayChapter = letter.fromPrisoner ? nil : letter.relayChapter
     let note = letter.fromPrisoner ? nil : letter.relayNote?.nonBlank
-    var request = SendMessageRequest(prisoner: letter.prisonerId, sender: sender, user: letter.asWriterId, relayChapter: relayChapter)
+    var request = SendMessageRequest(prisoner: letter.prisonerId, sender: sender, user: letter.asWriterId, relayChapter: relayChapter, resendOf: letter.fromPrisoner ? nil : letter.resendOf)
     guard await isEndToEnd() else {
       request.messageText = letter.body
       request.relayNote = note

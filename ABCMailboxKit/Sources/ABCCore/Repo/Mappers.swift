@@ -114,8 +114,12 @@ extension MessageDTO {
       keep: keep ?? false,
       createdAt: createdAt.instant,
       statusChangedAt: statusChangedAt.instant,
-      history: (statusHistory ?? []).map { StatusChange(from: $0.fromStatus.map { LetterStatus.from(key: $0) }, to: .from(key: $0.toStatus), at: $0.createdAt.instant, byUserId: $0.changedBy) },
-      attachments: (attachments ?? []).map { $0.toDomain() }
+      history: (statusHistory ?? []).map { StatusChange(from: $0.fromStatus.map { LetterStatus.from(key: $0) }, to: .from(key: $0.toStatus), at: $0.createdAt.instant, byUserId: $0.changedBy, reason: .from(key: $0.reason), note: $0.note?.nonBlank) },
+      attachments: (attachments ?? []).map { $0.toDomain() },
+      returnReason: .from(key: returnReason),
+      heldReason: .from(key: heldReason),
+      resendOf: resendOf,
+      resentAs: (resentAs ?? []).map { Resend(id: $0.id, status: .from(key: $0.status), createdAt: $0.createdAt.instant) }
     )
   }
 }

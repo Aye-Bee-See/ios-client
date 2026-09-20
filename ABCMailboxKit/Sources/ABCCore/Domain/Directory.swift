@@ -147,7 +147,7 @@ public struct SupportGroup: Equatable, Identifiable, Sendable {
   }
 
   public var location: String { [subregion, country].compactMap { $0 }.joined(separator: ", ") }
-  var isActive: Bool { accountStatus == nil || accountStatus == "active" }
+  public var isActive: Bool { accountStatus == nil || accountStatus == "active" }
 }
 
 /// Service keys the API accepts, with the labels the site uses.

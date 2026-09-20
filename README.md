@@ -44,6 +44,11 @@ cd ABCMailboxKit && ABC_LIVE_SERVER=http://localhost:3000 ABC_LIVE_E2E=http://lo
 # Only for an API you started to throw away; it refuses ports 3000 and 3100.
 cd ABCMailboxKit && ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServer
 
+# Returned mail, a release and a move, played by a writer and a group member. It edits the directory and moves
+# letters, so it too is only for a throwaway API (PR #106 or later, ADMIN_PASSWORD=abcpassword), after
+# `python3 ../Android/tools/dev-seed.py http://localhost:3199` has added member1 and the relay links.
+cd ABCMailboxKit && ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerReturnedMovedAndFreed
+
 # Every response captured by Android's tools/capture-contract.py still decodes with this app's types.
 cd ABCMailboxKit && ABC_CONTRACT_DIR=/tmp/contract swift test --filter ContractCheck
 ```
@@ -90,9 +95,23 @@ Account tab, last item: "Delete my account…" (API pull request #104). The serv
 
 Not built: a group deleting one of its unclaimed managed writers, which the same endpoint allows without a password.
 
+## Letters that come back, and people who are moved or freed
+
+API pull requests #105 and #106.
+
+**Returned mail.** A group member opens a mailed letter and taps "It came back…": one of the API's six reasons, and optionally what the envelope said (200 characters, counted and refused on the phone before the server has to). The sheet says plainly that the writer reads the note and that it is never encrypted, so nothing about the letter belongs in it. The queue has a Returned filter. The writer's feed says only "One of your letters came back in the post." (the reason is inside the app, not on a lock screen); the conversation shows the reason in words, the group's note, and "Send it again". The server keeps no copy to send again (in end-to-end mode it could not read one), so the compose screen opens with the returned letter's text, note and files, downloaded and staged again, and the new letter names the old one (`resendOf`). The relay group is not copied: the letter is routed afresh. Where the reason doubts the address (`transferred`, `released`, `bad_address`) the writer is told to check the person's page first. A returned letter can be sent again once; after that the card says when, and how the new letter is doing.
+
+**Moved and freed.** Two new feed events have words ("Someone you write to was moved to another facility.", "Someone you write to has been released.", each with how many letters are now waiting for the writer). A held letter stays queued and says why, in the writer's conversation and in the group's queue (a Held filter, `held=true`):
+
+- `choose_relay`: "Choose who mails it" asks the directory where the person is now and offers that facility's active relay groups; the choice is sent as `{id, relayChapter}` and nothing else.
+- `reseal_needed` (end-to-end mode): "Send it again" opens the compose screen with the letter; sending seals it to the group that mails to the new facility, and only then deletes the held copy. This one does not fall back to the outbox when offline, because the held copy is still safely on the server.
+- `prisoner_free`: the writer is told they can delete it or leave it. The group member sees "Print it anyway…" instead of "Mark as printed", and a confirmation before `release: true` is sent. If the hold appeared after the screen was loaded, the server's `LetterHeldError` reloads the letter and says so instead of printing.
+
+Not built, because this app has no screens that edit the directory: the `addressInDoubt` worklist and the `mail` report that `PUT /prisoner/prisoner` returns. Those belong to the dashboard.
+
 ## Behind Android
 
-As of Android commit `356a743`, not yet in this app:
+Android does not have API pull requests #105 and #106 yet (as of its commit `09e4280`); in that respect this app is ahead. As of Android commit `356a743`, not yet in this app:
 
 - **Spanish and Russian** (Android phase 9). Every string here is English, in the Swift source.
 - **The push doorbell** (API pull request #96, Android phase 10). iPhones are reached through Firebase, so this needs a Firebase project with this app added to it (`GoogleService-Info.plist`), an APNs key from a paid Apple developer account uploaded there, the Push Notifications capability, and a notification service extension to replace the server's bland alert with wording made on the phone. None of that exists yet on either platform. It will change when the news arrives, not what is shown: a push carries nothing, and the feed below is where the news comes from either way. Registering the device (`POST /auth/device`) and the devices list belong with it.
@@ -100,10 +119,11 @@ As of Android commit `356a743`, not yet in this app:
 
 ## What was verified, and what was not
 
-As of 19 September 2026.
+As of 20 September 2026.
 
 - **Verified by tests and tools.** All tests pass. Crypto interoperates with the API and libsodium.js in both directions. Against the live development servers: the directory, the offline download, a writer's threads, a group's queue and writers in server mode; and in end-to-end mode, a group member's key (wrapped by the Android app) opened with their password, the group key opened with that, and letters written by other clients decrypted. The app builds in Xcode, Debug and Release, with no warnings, including the asset catalog (icon, accent colour).
 - **Seen on screen** (iPhone 17 simulator, iOS 26.5, against the local API in server mode, signed out): the Directory home page with featured prisoners, the prisoners list with its filters and with more rows loading as it scrolls, a prisoner's profile, the sign-in screen, and the Account tab with the offline directory downloaded on launch and the server's mode detected. That first run found two layout bugs, both fixed: interest tags wrapping onto a line whose height the row had not reserved, so the next row's divider ran through them; and "Est. release" breaking in the middle.
 - **Seen since, signed in as a group member:** the print queue.
 - **Account deletion, against a real API (20 September 2026).** On a throwaway server with API pull request #104 and its seeded account `user3`: the server refuses a wrong password with 403, the app's own check stops a wrong password before any delete request is sent, the account and its two conversations are still there afterwards, the right password deletes them, and signing in again is refused. The delete screen itself was not driven end to end in the simulator; its model is covered by unit tests.
+- **Returned, moved and freed, against a real API (20 September 2026).** On a throwaway server at API pull request #106, server mode, with the writer's and the group member's side of the core layer: a mailed letter recorded as returned with reason and note, the writer's feed and letter showing it, sending it again refused before the return and accepted after, `resent_as` linking the two; a release holding the queued letter, the group's held list, printing refused with `LetterHeldError` and accepted with `release: true`; a move to a relay-only facility with two groups holding a letter as `choose_relay`, the directory offering both groups, the writer's choice lifting the hold and putting the letter in that group's queue. **Not verified:** `reseal_needed` against a real end-to-end server (the fake API covers the client's part), and none of the new screens has been seen on a simulator with real data, because they are behind sign-in.
 - **Not yet seen on screen.** The outbox (it needs the API to be unreachable, and the development server was in use); the rest behind sign-in: the writer's inbox, threads, compose and attachments, claim, recovery and the recovery-code screen, password change, and all of the group screens; the facilities and groups lists and pages; anything against the end-to-end server; the saved-copy banner with no connection; the camera and printing; an iPad; dark mode; large text sizes; VoiceOver. The logic behind those screens is tested; their layout is not. Expect more findings of the kind above. The "what to try by hand" lists in `../Android/docs/PLAN.md` apply unchanged.
