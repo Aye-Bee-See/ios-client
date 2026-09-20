@@ -144,4 +144,54 @@ final class LiveServerTests: XCTestCase {
     try await app.sessions.logout()
     XCTAssertFalse(app.keyring.state.isReady, "signing out forgets the group key")
   }
+
+  // MARK: - Destructive. Only ever against a server made to be thrown away.
+
+  /// Deletes a seeded account on a real API (PR #104), wrong password first. **This one writes and deletes**,
+  /// unlike everything above, so it has a variable of its own and refuses the usual development ports:
+  ///
+  ///     # a throwaway API: its own database file, DB_RESET=true DB_SEED=true, some unused port
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServer
+  ///
+  /// It uses the seed's `user3` / `password3`, so nothing has to be created, and it cannot be run twice
+  /// against the same database: the second time, user3 is gone.
+  func testThrowawayServerDeletingAnAccountWrongPasswordFirst() async throws {
+    let app = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test deletes") }
+    await app.modes.refresh()
+
+    try await app.sessions.login(username: "user3", password: "password3")
+    app.sessions.recoveryCodeSaved()
+    let firstPage = try await app.directory.prisoners(PrisonerFilter(), page: 1, pageSize: 1)
+    let prisoner = try XCTUnwrap(firstPage.items.first)
+    let sent = try await app.letters.send(NewLetter(prisonerId: prisoner.id, body: "A letter that is about to be deleted with its account.", relayNote: nil, relayChapter: nil))
+    app.drafts.save(userId: try XCTUnwrap(app.sessions.state.user?.id), prisonerId: prisoner.id, draft: Draft(body: "and a draft", note: nil, relayChapter: nil))
+
+    let preview = await app.accountDeletion.preview()
+    print("live throwaway: before deleting, user3 has \(preview.conversations ?? -1) conversations")
+    XCTAssertGreaterThanOrEqual(try XCTUnwrap(preview.conversations), 1)
+
+    // 1. The server's own check (PR #104), asked directly, without the phone's check in front of it.
+    await assertThrowsAppError(try await app.sessions.deleteAccount(password: "not the password")) {
+      print("live throwaway: the server answered a wrong password with: \($0)")
+      guard case .forbidden = $0 else { return XCTFail("expected the server's 403, got \($0)") }
+    }
+    XCTAssertTrue(app.sessions.state.isSignedIn, "a 403 is not a revoked session")
+
+    // 2. The way the app does it: the phone proves the password first.
+    await assertThrowsAppError(try await app.accountDeletion.deleteMyAccount(password: "not the password")) { XCTAssertEqual($0, AccountDeletion.wrongPassword) }
+    XCTAssertTrue(app.sessions.state.isSignedIn)
+    let stillThere = try await app.letters.letter(messageId: sent.id)
+    XCTAssertEqual(stillThere.body, "A letter that is about to be deleted with its account.", "nothing was deleted")
+
+    // 3. The right password.
+    let gone = try await app.accountDeletion.deleteMyAccount(password: "password3")
+    print("live throwaway: deleted \(gone)")
+    XCTAssertGreaterThanOrEqual(gone.letters, 1); XCTAssertGreaterThanOrEqual(gone.threads, 1)
+    XCTAssertFalse(app.sessions.state.isSignedIn)
+    XCTAssertNil(app.drafts.load(userId: 3, prisonerId: prisoner.id))
+    await assertThrowsAppError(try await app.sessions.login(username: "user3", password: "password3")) { XCTAssertTrue($0.isUnauthorized, "the account is gone: \($0)") }
+  }
 }
+

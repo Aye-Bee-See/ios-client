@@ -2,6 +2,16 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-20: the phone proves the password before asking for a delete
+
+**Context.** First real use of the delete screen, on the simulator: a wrong password deleted the account. The app had sent the wrong password faithfully; the development server had been started hours before API PR #104 was merged, and its `DELETE /auth/user` handler never reads `password`. It deleted on the token alone, which is what that endpoint did before the PR.
+
+**Decision.** `AccountDeletion` signs in with the typed password first (as the change-password flow already does) and sends the delete only if that succeeds. A wrong password never reaches `DELETE /auth/user`.
+
+**Why.** A guard that exists only on the server is a guard only against servers that have it. A deployed API can lag an app release exactly as that development server did, and this is the one action in the app that cannot be undone. The cost is one extra request. Wrong guesses are limited like failed sign-ins, and a 429 is shown as itself rather than as "wrong password".
+
+**Consequences.** The server's own check (PR #104) still runs and is still honoured. `AccountDeletionTests` has a fake server from before the PR to keep this from regressing.
+
 ## 2026-09-20: four guards on deleting an account, and none of them is a delay
 
 **Context.** `DELETE /auth/user` (API PR #104) removes a person and every letter they wrote or received. Nothing is kept and nobody can undo it. For some writers those letters are years of correspondence with someone in prison.

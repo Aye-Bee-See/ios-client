@@ -47,6 +47,8 @@ public final class AccountDeletion {
     self.activity = activity
   }
 
+  static let wrongPassword = AppError.forbidden("That is not this account's password. Nothing was deleted.")
+
   public func preview() async -> AccountDeletionPreview {
     var p = AccountDeletionPreview()
     guard let user = sessions.state.user else { return p }
@@ -68,12 +70,18 @@ public final class AccountDeletion {
     guard let user = sessions.state.user else { throw AppError.unauthorized("You are signed out.") }
     outbox.reload()
     let unsent = outbox.items.count
+    // The server checks the password (API PR #104), but only a server that has PR #104. Against an older
+    // build the field is ignored and the account is deleted on the token alone: found on 20 September 2026,
+    // when a development server started before the merge deleted an account given a wrong password. A
+    // deployed API can lag an app release the same way, so the phone does not take the server's check on
+    // trust: it proves the password first, by signing in with it, and sends nothing if that fails.
+    guard try await sessions.passwordIsRight(password) else { throw Self.wrongPassword }
     let gone: DeletedUserDTO
     do {
       gone = try await sessions.deleteAccount(password: password)
     } catch let e as AppError {
       // The API answers a wrong password with 403 and its own sentence; say plainly that nothing happened.
-      if case .forbidden = e { throw AppError.forbidden("That is not this account's password. Nothing was deleted.") }
+      if case .forbidden = e { throw Self.wrongPassword }
       throw e
     }
     // The session and the keys went with `deleteAccount`. What else this phone held for the account:

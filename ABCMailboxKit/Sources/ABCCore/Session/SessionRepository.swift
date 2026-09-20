@@ -165,11 +165,7 @@ public final class SessionRepository {
   public func changePassword(current: String, new: String) async throws {
     guard let session = state.session else { throw AppError.unauthorized("You are signed out.") }
     // The API does not ask for the current password, so confirm it by signing in with it.
-    do {
-      let _: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: session.user.username, password: current))
-    } catch let e as AppError where e.isUnauthorized {
-      throw AppError.validation(["Your current password is incorrect."])
-    }
+    guard try await passwordIsRight(current) else { throw AppError.validation(["Your current password is incorrect."]) }
     var request = UpdateUserRequest(id: session.user.id, password: new)
     // The private key is wrapped under the password, so a new password means a new wrapping: in either
     // mode, now that accounts have keys before the switch. Changing the password without it would leave
@@ -225,6 +221,19 @@ public final class SessionRepository {
     let w = try await wrapped(keyPair, under: newPassword)
     try await api.send("POST", "auth/recover", body: RecoverFinishRequest(username: username.trimmed, challenge: challenge, password: newPassword, wrappedPrivateKey: w.wrapped, kdfSalt: w.salt, kdfParams: w.params))
     return try await login(username: username, password: newPassword)
+  }
+
+  /// Whether `password` is the signed-in account's, asked of the server by signing in with it. Sign-in never
+  /// carries the session token, so a wrong guess is not mistaken for a revoked session, and guesses are
+  /// rate limited there like any failed sign-in (a 429 is thrown, not swallowed).
+  func passwordIsRight(_ password: String) async throws -> Bool {
+    guard let user = state.user else { throw AppError.unauthorized("You are signed out.") }
+    do {
+      let _: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: user.username, password: password))
+      return true
+    } catch let e as AppError where e.isUnauthorized {
+      return false
+    }
   }
 
   /// Deletes the signed-in account and everything the person wrote or received through it (API PR #104).

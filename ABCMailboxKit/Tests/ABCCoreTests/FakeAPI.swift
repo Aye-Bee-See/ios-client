@@ -35,6 +35,8 @@ final class FakeAPI: @unchecked Sendable {
   var challenges: [String: String] = [:] // username -> challenge (base64)
   /// Answer the next matching request with this instead (one shot), e.g. a 409 to simulate a key rotation.
   var intercept: ((Recorded) -> Stubbed?)?
+  /// An API build from before PR #104: `DELETE /auth/user` never reads `password` and deletes one's own account on the token alone.
+  var predatesPasswordOnDelete = false
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -183,7 +185,7 @@ final class FakeAPI: @unchecked Sendable {
       // API PR #104: the person goes, with everything they wrote and received.
       guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
       guard target == a.id else { return .error(403, info: "Not yours to delete.") }
-      guard body["password"] as? String == a.password else { return .error(403, info: "Incorrect password.") }
+      guard predatesPasswordOnDelete || body["password"] as? String == a.password else { return .error(403, info: "Incorrect password.") }
       if a.anonymousFor != nil { return .error(409, info: "A group's shared anonymous account cannot be deleted.", extra: ["name": "AccountDeleteError"]) }
       if mode == "e2e", let g = a.chapterId, memberKeys[g]?[a.id] != nil, (memberKeys[g] ?? [:]).count == 1 {
         return .error(409, info: "Error deleting user.", extra: ["name": "AccountDeleteError", "error": "You are the last holder of your group's key. Hand it to another member first, or the group could never read its letters again."])

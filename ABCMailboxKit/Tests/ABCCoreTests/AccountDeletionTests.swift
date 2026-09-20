@@ -64,9 +64,31 @@ final class AccountDeletionTests: XCTestCase {
       XCTAssertEqual($0, .forbidden("That is not this account's password. Nothing was deleted."))
     }
     XCTAssertNotNil(fake.accounts.first { $0.id == 4 })
+    XCTAssertEqual(app.requests(to: "/auth/user", method: "DELETE").count, 0, "the phone proves the password first; a wrong one never reaches the delete")
     XCTAssertTrue(app.container.sessions.state.isSignedIn); XCTAssertEqual(app.container.sessions.expiredCount, 0)
     XCTAssertNotNil(app.container.vault.keyPair(for: 4))
     XCTAssertEqual(app.container.drafts.load(userId: 4, prisonerId: 7)?.body, "half a letter")
+  }
+
+  func testAServerFromBeforePR104WhichIgnoresThePasswordStillCannotBeMadeToDeleteWithAWrongOne() async throws {
+    // Found on the simulator, 20 September 2026: a development server started before the merge deleted
+    // an account given a wrong password, because its handler never reads the field.
+    fake.predatesPasswordOnDelete = true
+    try await signIn()
+    _ = try await app.container.letters.send(NewLetter(prisonerId: 3, body: "Dear Jane", relayNote: nil, relayChapter: nil))
+    await assertThrowsAppError(try await deletion.deleteMyAccount(password: "a guess")) { XCTAssertEqual($0, AccountDeletion.wrongPassword) }
+    XCTAssertNotNil(fake.accounts.first { $0.id == 4 }); XCTAssertEqual(fake.messages.count, 1)
+    XCTAssertEqual(app.requests(to: "/auth/user", method: "DELETE").count, 0)
+    XCTAssertTrue(app.container.sessions.state.isSignedIn)
+
+    // Guesses are limited like failed sign-ins, and the limit is shown, not mistaken for a wrong password.
+    fake.intercept = { $0.path == "/auth/login" ? .error(429, info: "Too many sign-in attempts. Try again in 15 minute(s).") : nil }
+    await assertThrowsAppError(try await deletion.deleteMyAccount(password: "password1")) { guard case .rateLimited = $0 else { return XCTFail("expected the rate limit, got \($0)") } }
+    XCTAssertNotNil(fake.accounts.first { $0.id == 4 })
+
+    // The right password still works against the old server.
+    try await deletion.deleteMyAccount(password: "password1")
+    XCTAssertNil(fake.accounts.first { $0.id == 4 })
   }
 
   func testNoAnswerFromTheServerDeletesNothingOnThePhoneEither() async throws {
