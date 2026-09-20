@@ -189,6 +189,12 @@ public final class OutboxRepository {
     reload()
   }
 
+  /// Every letter one account has waiting, files and all, when that account is deleted.
+  func deleteAll(userId: Int) {
+    try? FileManager.default.removeItem(at: directory.appendingPathComponent(String(userId), isDirectory: true))
+    reload()
+  }
+
   /// Puts a refused letter back in line, unchanged (the reason may have been temporary: a suspended group, say).
   public func retry(_ id: String) {
     guard let userId = myId, var entry = read(url(id, userId)) else { return }

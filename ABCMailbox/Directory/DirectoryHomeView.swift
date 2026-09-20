@@ -38,6 +38,7 @@ struct DirectoryHomeView: View {
     .background(Theme.paper)
     .savedCopyBanner(app)
     .toolbar(.hidden, for: .navigationBar)
+    .statusBarBacking()
     .task { if featured.value == nil { await load() } }
   }
 

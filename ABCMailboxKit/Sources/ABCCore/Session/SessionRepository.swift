@@ -227,6 +227,17 @@ public final class SessionRepository {
     return try await login(username: username, password: newPassword)
   }
 
+  /// Deletes the signed-in account and everything the person wrote or received through it (API PR #104).
+  /// It cannot be undone. The server wants the current password; a wrong one is a 403 and deletes nothing.
+  /// On success every token of the account is dead, so this phone forgets the session and the keys at once.
+  /// Use `AccountDeletion`, which also clears what else this phone holds for the account.
+  func deleteAccount(password: String) async throws -> DeletedUserDTO {
+    guard let user = state.user else { throw AppError.unauthorized("You are signed out.") }
+    let envelope: APIEnvelope<DeletedUserDTO> = try await api.send("DELETE", "auth/user", body: DeleteUserRequest(id: user.id, password: password))
+    forgetLocally()
+    return envelope.data ?? DeletedUserDTO(letters: nil, replies: nil, attachments: nil, threads: nil)
+  }
+
   private func wrapped(_ keyPair: Sodium.KeyPair, under password: String) async throws -> WrappedKey {
     do { return try await engine.wrapForPassword(keyPair, password: password) } catch { throw AppError.unexpected("The key could not be wrapped: \(error)") }
   }

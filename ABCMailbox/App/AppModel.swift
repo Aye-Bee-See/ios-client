@@ -26,6 +26,7 @@ enum Route: Hashable {
   /// End-to-end servers: who in the group holds its key.
   case groupKey
   case changePassword
+  case deleteAccount
 }
 
 struct ComposeRequest: Hashable {

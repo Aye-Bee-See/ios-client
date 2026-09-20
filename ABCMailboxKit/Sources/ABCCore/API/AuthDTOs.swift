@@ -159,3 +159,17 @@ struct HealthDTO: Decodable {
   let status: String?
   let encryptionMode: String?
 }
+
+/// `DELETE /auth/user` (API PR #104). For one's own account the current password is required, so that a
+/// borrowed phone or a stolen token is not enough.
+struct DeleteUserRequest: Encodable {
+  let id: Int
+  let password: String?
+}
+
+struct DeletedUserDTO: Decodable {
+  let letters: Int?
+  let replies: Int?
+  let attachments: Int?
+  let threads: Int?
+}

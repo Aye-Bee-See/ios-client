@@ -33,6 +33,15 @@ struct Screen<Content: View>: View {
   }
 }
 
+extension View {
+  /// For the three tab pages, which hide the navigation bar: without a bar, scrolled content slides up
+  /// under the clock. This paints the status bar's strip in the page colour, above the content.
+  func statusBarBacking() -> some View {
+    // The colour reaches up past its zero-height frame into the safe area; framed first, it would stay zero high.
+    overlay(alignment: .top) { Theme.paper.ignoresSafeArea(edges: .top).frame(height: 0) }
+  }
+}
+
 struct SearchField: View {
   @Binding var text: String
   let placeholder: String

@@ -50,6 +50,13 @@ public final class DraftsRepository: Sendable {
 
   public func delete(userId: Int, prisonerId: Int) { try? FileManager.default.removeItem(at: file(userId, prisonerId)) }
 
+  /// One account's drafts, when that account is deleted.
+  public func deleteAll(userId: Int) {
+    for url in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] where url.lastPathComponent.hasPrefix("\(userId)_") {
+      try? FileManager.default.removeItem(at: url)
+    }
+  }
+
   public func deleteAll() {
     for url in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] { try? FileManager.default.removeItem(at: url) }
   }

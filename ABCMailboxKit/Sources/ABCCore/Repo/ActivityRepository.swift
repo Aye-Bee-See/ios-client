@@ -36,6 +36,9 @@ public final class ActivityRepository {
   /// Per account: two people sharing a phone each have their own place in their own feed.
   private func lastSeenKey(_ user: Int) -> String { "activity_last_seen_\(user)" }
 
+  /// The account is gone: so is its place in a feed that no longer exists.
+  func forget(userId: Int) { defaults.removeObject(forKey: lastSeenKey(userId)) }
+
   /// Fetches what is new since this phone last looked. Quiet when signed out or offline: this is housekeeping.
   ///
   /// `announce` hands the news to the notifier (a notification), for when nobody is looking at the app.

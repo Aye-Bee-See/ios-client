@@ -26,7 +26,7 @@ Requires Xcode 26 (Swift 6 toolchain; the code is in Swift 5 language mode). The
 cd ABCMailboxKit && swift test
 ```
 
-That is the whole test suite: about 145 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
+That is the whole test suite: about 150 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
 
 To run the app, open `ABCMailbox.xcodeproj`, choose the `ABCMailbox` scheme and a simulator, and run. To sign and run on a phone, set your team under Signing & Capabilities.
 
@@ -79,6 +79,12 @@ This is the full list from the API's migration guide. Android, as of `cbf93c3`, 
 The notification feed (`GET /auth/notifications`, API pull request #96) says that a reply arrived, that a letter was printed or mailed, that a letter is waiting for the group, or that a proposed change was decided. Entries carry ids and states, never content, and what they *say* is worded on the phone and names nobody ("A reply to one of your letters has arrived."), because it ends up on a lock screen. The Inbox tab's badge counts unread news plus letters waiting in the outbox; opening the Inbox marks the news read, on this phone and the person's others. With the app open the news is a toast; otherwise it is one notification, which opens the conversation when all its news is about one, and the Inbox when not.
 
 The app fetches the feed when it opens and when iOS grants a background refresh (asked for every six hours; iOS decides). Permission for notifications is asked only when the person taps "Allow notifications" on the Account tab or queues a letter offline, never at launch.
+
+## Deleting an account
+
+Account tab, last item: "Delete my account…" (API pull request #104). The server deletes the person with everything they wrote and received, whatever its status, and it cannot be undone, so the screen says in words what will go and what will not (a letter already in the post is not recalled; what a group member did for their group stays, without their name) before it asks for anything. Then three things stand between a person and a mistake: typing their username, their password (which the server checks, so a borrowed phone is not enough), and a last confirmation that names the consequence again. A group member who is the only holder of their group's key is told so up front and sent to the Group key screen, instead of meeting the server's refusal at the end. Nothing is removed from the phone unless the server says the account is gone; when it has, the phone keeps nothing either: session, keys, drafts, unsent letters, and the account's place in its notification feed.
+
+Not built: a group deleting one of its unclaimed managed writers, which the same endpoint allows without a password.
 
 ## Behind Android
 

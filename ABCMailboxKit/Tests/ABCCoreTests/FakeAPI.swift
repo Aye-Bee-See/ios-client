@@ -179,6 +179,27 @@ final class FakeAPI: @unchecked Sendable {
       }
       return .data([:])
 
+    case ("DELETE", "/auth/user"):
+      // API PR #104: the person goes, with everything they wrote and received.
+      guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
+      guard target == a.id else { return .error(403, info: "Not yours to delete.") }
+      guard body["password"] as? String == a.password else { return .error(403, info: "Incorrect password.") }
+      if a.anonymousFor != nil { return .error(409, info: "A group's shared anonymous account cannot be deleted.", extra: ["name": "AccountDeleteError"]) }
+      if mode == "e2e", let g = a.chapterId, memberKeys[g]?[a.id] != nil, (memberKeys[g] ?? [:]).count == 1 {
+        return .error(409, info: "Error deleting user.", extra: ["name": "AccountDeleteError", "error": "You are the last holder of your group's key. Hand it to another member first, or the group could never read its letters again."])
+      }
+      let theirs = messages.filter { $0["user"] as? Int == target }
+      let ids = Set(theirs.compactMap { $0["id"] as? Int })
+      let files = attachments.filter { ids.contains($0.value.meta["message"] as? Int ?? -1) }.map(\.key)
+      messages.removeAll { $0["user"] as? Int == target }
+      files.forEach { attachments[$0] = nil }
+      accounts.remove(at: i)
+      tokens = tokens.filter { $0.value != target }
+      notifications[target] = nil
+      if let g = a.chapterId { memberKeys[g]?[target] = nil }
+      let replies = theirs.filter { $0["sender"] as? String == "prisoner" }.count
+      return .data(["deleted": 1, "letters": theirs.count - replies, "replies": replies, "attachments": files.count, "threads": theirs.isEmpty ? 0 : 1])
+
     case ("GET", "/auth/recover"):
       guard let a = accounts.first(where: { $0.username == r.query["username"] }), let publicKey = a.keys["publicKey"] as? String, a.keys["recoveryWrappedPrivateKey"] != nil else { return .error(404, info: "No recovery.") }
       let challenge = Sodium.randomBytes(32)
@@ -292,6 +313,13 @@ final class FakeAPI: @unchecked Sendable {
       m["user"] = body["user"] ?? a.id; m["createdAt"] = "2026-09-19T10:00:00.000Z"; m["keep"] = false
       messages.append(m)
       return .data(visible(m, to: a))
+
+    case ("GET", "/chat/chats"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      let mine = messages.filter { $0["user"] as? Int == a.id }
+      let chats = Set(mine.compactMap { $0["prisoner"] as? Int }).sorted().map { ["id": $0, "prisoner": $0] as [String: Any] }
+      let size = Int(r.query["page_size"] ?? "20") ?? 20
+      return .data(Array(chats.prefix(size)), extra: ["total": chats.count, "page": 1, "page_size": size])
 
     case ("GET", "/messaging/message"):
       guard let a = caller(r), let m = messages.first(where: { $0["id"] as? Int == r.query["id"].flatMap(Int.init) }) else { return .error(404, info: "No such letter.") }

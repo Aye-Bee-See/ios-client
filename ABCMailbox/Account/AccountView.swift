@@ -77,9 +77,15 @@ struct AccountView: View {
       }
       Divider().overlay(Theme.rule)
       OfflineCopySection(app: app)
+      if app.user != nil {
+        // Last, below everything someone comes to this tab for, and quiet: it should be findable, not inviting.
+        Divider().overlay(Theme.rule)
+        Button("Delete my account…") { app.push(.deleteAccount) }.buttonStyle(.destructiveLink)
+      }
       buildLine
     }
     .toolbar(.hidden, for: .navigationBar)
+    .statusBarBacking()
     .sheet(isPresented: $model.serverDialog) { DevServerSheet(app: app, model: model) }
   }
 
