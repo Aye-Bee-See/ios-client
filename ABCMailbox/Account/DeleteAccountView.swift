@@ -7,6 +7,8 @@ final class DeleteAccountModel {
   var typedUsername = ""
   var password = ""
   var show = false
+  /// Ticked by hand: the one guard that makes the person read the sentence that matters most.
+  var understood = false
   private(set) var preview: AccountDeletionPreview?
   private(set) var busy = false
   private(set) var error: String?
@@ -26,7 +28,7 @@ final class DeleteAccountModel {
   /// intent, not identity.
   var usernameMatches: Bool { typedUsername.trimmingCharacters(in: .whitespaces).lowercased() == username.lowercased() }
   var blockedByGroupKey: Bool { preview?.isLastKeyHolder == true }
-  var canDelete: Bool { !busy && usernameMatches && !password.isEmpty && !blockedByGroupKey }
+  var canDelete: Bool { !busy && usernameMatches && !password.isEmpty && understood && !blockedByGroupKey }
 
   func edited() { error = nil }
 
@@ -63,8 +65,9 @@ final class DeleteAccountModel {
 }
 
 /// Deleting one's own account (API PR #104). The screen says in words what will go before it asks for
-/// anything; then three things stand between a person and a mistake: typing their username, their
-/// password (which the server checks), and a last confirmation that names the consequence again.
+/// anything; then four things stand between a person and a mistake: typing their username, their
+/// password (which the server checks), ticking "I understand this cannot be undone", and a last
+/// confirmation that names the consequence again.
 struct DeleteAccountView: View {
   @State private var model: DeleteAccountModel
   @State private var confirming = false
@@ -151,6 +154,7 @@ struct DeleteAccountView: View {
     // Not offered to a password manager as a sign-in: filling it in should be a deliberate act.
     PasswordField(label: "Your password", text: $model.password, show: $model.show, hint: "Checked by the server, so that a borrowed phone is not enough.")
       .accessibilityIdentifier("delete-password")
+    CheckboxRow(text: "I understand this cannot be undone.", isOn: $model.understood).accessibilityIdentifier("delete-understood")
     ErrorText(model.error)
     Button(model.busy ? "Deleting…" : "Delete my account and all my letters") { confirming = true }
       .buttonStyle(DestructiveButtonStyle()).disabled(!model.canDelete).accessibilityIdentifier("delete-submit")

@@ -2,11 +2,11 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
-## 2026-09-20: three guards on deleting an account, and none of them is a delay
+## 2026-09-20: four guards on deleting an account, and none of them is a delay
 
 **Context.** `DELETE /auth/user` (API PR #104) removes a person and every letter they wrote or received. Nothing is kept and nobody can undo it. For some writers those letters are years of correspondence with someone in prison.
 
-**Decision.** The link is the last thing on the Account tab and quiet. The screen first says what goes and what does not, in numbers where it can ("your 12 conversations"). Then: type the username (guards against a slip of the thumb; case and spaces forgiven, because it proves intent, not identity); the password (the server requires it, so a stolen token or a borrowed unlocked phone is not enough; a wrong one is answered "Nothing was deleted."); and a final system confirmation whose destructive button says "Delete everything". The password field is cleared after every attempt.
+**Decision.** The link is the last thing on the Account tab and quiet. The screen first says what goes and what does not, in numbers where it can ("your 12 conversations"). Then: type the username (guards against a slip of the thumb; case and spaces forgiven, because it proves intent, not identity); the password (the server requires it, so a stolen token or a borrowed unlocked phone is not enough; a wrong one is answered "Nothing was deleted."); a checkbox, "I understand this cannot be undone", which must be ticked by hand (asked for by the project's owner: of the four it is the only one that makes a person read the sentence that matters most, and it stays ticked through a mistyped password, because their intent has not changed); and a final system confirmation whose destructive button says "Delete everything". The password field is cleared after every attempt.
 
 **Rejected.** A countdown or a cooling-off period: the API deletes at once, so a delay on the phone would be theatre, and a person leaving because they are in danger should not be made to wait. Face ID in place of the password: the server could not verify it. Hiding the option from group members: it is their account too; the one case where it must not proceed (the last holder of a group's key) is explained before they type anything, with the way out.
 
