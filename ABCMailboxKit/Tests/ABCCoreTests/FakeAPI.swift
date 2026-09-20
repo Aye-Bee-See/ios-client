@@ -29,6 +29,9 @@ final class FakeAPI: @unchecked Sendable {
   var groupKeys: [Int: (publicKey: String, version: Int)] = [:]
   var memberKeys: [Int: [Int: String]] = [:] // group -> member -> sealed group private key
   var tokens: [String: Int] = [:]
+  /// The notification feed, per account, as the API keeps it: ids and states, never content (PR #96).
+  var notifications: [Int: [[String: Any]]] = [:]
+  private var nextNotification = 40
   var challenges: [String: String] = [:] // username -> challenge (base64)
   /// Answer the next matching request with this instead (one shot), e.g. a 409 to simulate a key rotation.
   var intercept: ((Recorded) -> Stubbed?)?
@@ -79,6 +82,14 @@ final class FakeAPI: @unchecked Sendable {
   }
 
   private func id() -> Int { nextId += 1; return nextId }
+
+  /// Something happened that `user` should hear about.
+  func tell(_ user: Int, _ event: String, chat: Int? = 12, message: Int? = nil, detail: [String: Any]? = nil) {
+    lock.withLock {
+      nextNotification += 1
+      notifications[user, default: []].insert(["id": nextNotification, "event": event, "chat": chat ?? NSNull(), "message": message ?? NSNull(), "submission": NSNull(), "detail": detail ?? NSNull(), "readAt": NSNull(), "createdAt": "2026-09-19T10:00:00.000Z"], at: 0)
+    }
+  }
   private func caller(_ r: Recorded) -> Account? {
     guard let header = r.headers["Authorization"], let id = tokens[String(header.dropFirst("Bearer ".count))] else { return nil }
     return accounts.first { $0.id == id }
@@ -252,6 +263,20 @@ final class FakeAPI: @unchecked Sendable {
     case ("DELETE", "/auth/member-key"):
       memberKeys[body["chapter"] as! Int]?[body["user"] as! Int] = nil
       return .data([:])
+
+    case ("GET", "/auth/notifications"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      let all = notifications[a.id] ?? []
+      let unread = all.filter { $0["readAt"] is NSNull }
+      var rows = r.query["unread"] == "true" ? unread : all
+      if let since = r.query["since"].flatMap(Int.init) { rows = rows.filter { ($0["id"] as? Int ?? 0) > since } }
+      return .data(rows, extra: ["total": rows.count, "page": 1, "page_size": 10, "unread": unread.count])
+
+    case ("PUT", "/auth/notifications/read"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      let before = (notifications[a.id] ?? []).filter { $0["readAt"] is NSNull }.count
+      notifications[a.id] = (notifications[a.id] ?? []).map { var n = $0; n["readAt"] = "2026-09-19T11:00:00.000Z"; return n }
+      return .data(["marked": before, "unread": 0])
 
     case ("POST", "/messaging/message"):
       guard let a = caller(r) else { return .error(401, info: "Sign in.") }

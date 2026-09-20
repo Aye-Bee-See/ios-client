@@ -12,7 +12,7 @@ struct RootView: View {
       TabView(selection: $app.tab) {
         tab(.directory, "Directory", "book", path: $app.directoryPath) { DirectoryHomeView(app: app) }
         tab(.inbox, "Inbox", "envelope", path: $app.inboxPath) { InboxView() }
-          .badge(app.container.outbox.items.count) // letters waiting to be sent; no badge at zero
+          .badge(app.inboxBadge) // letters waiting to be sent, plus news not yet seen; no badge at zero
         tab(.account, "Account", "person", path: $app.accountPath) { AccountView(app: app) }
       }
       toastOverlay
@@ -37,6 +37,7 @@ struct RootView: View {
       // Letters belong to the account that wrote them: show this account's, and send them now that someone is signed in.
       Task { await app.flushOutbox() }
       Task { await app.setUpKeys() }
+      Task { await app.syncActivity() }
     }
     .task { await app.setUpKeys() } // at launch, for someone already signed in
   }

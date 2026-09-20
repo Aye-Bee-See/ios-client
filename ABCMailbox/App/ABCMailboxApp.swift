@@ -29,6 +29,15 @@ struct ABCMailboxApp: App {
       }
       task.expirationHandler = { work.cancel() }
     }
+    // The notification feed, a few times a day when iOS allows. Announced as a notification: nobody is looking.
+    BGTaskScheduler.shared.register(forTaskWithIdentifier: ActivityAnnouncer.backgroundTask, using: nil) { task in
+      ActivityAnnouncer.scheduleBackgroundRefresh()
+      let work = Task { @MainActor in
+        await model.container.activity.sync(announce: true)
+        task.setTaskCompleted(success: true)
+      }
+      task.expirationHandler = { work.cancel() }
+    }
   }
 
   var body: some Scene {
@@ -39,8 +48,12 @@ struct ABCMailboxApp: App {
     }
     .onChange(of: scenePhase) {
       switch scenePhase {
-      case .active: Task { await app.flushOutbox() }
-      case .background: if app.container.outbox.hasWaiting { OutboxNotifier.scheduleBackgroundSend() }
+      case .active:
+        Task { await app.flushOutbox() }
+        Task { await app.syncActivity() }
+      case .background:
+        if app.container.outbox.hasWaiting { OutboxNotifier.scheduleBackgroundSend() }
+        if app.user != nil { ActivityAnnouncer.scheduleBackgroundRefresh() }
       default: break
       }
     }

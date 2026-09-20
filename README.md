@@ -2,7 +2,7 @@
 
 The iPhone and iPad client for Aye Bee See, a correspondence network for political prisoners. Writers find a prisoner, read the facility's mail rules, and write; a support group prints and mails the letter and records the reply.
 
-It does what the Android client (`../Android`) did as of its phase 8 (19 September 2026), screen for screen, and speaks the same API and the same end-to-end encryption. What Android has since gained and this app has not is listed under "Behind Android" below. The Android documents remain the map: `../Android/docs/PLAN.md` for what is built and why, `../android-client-brief.md` for the API. This directory adds only what is particular to iOS:
+It does what the Android client (`../Android`) did as of its phase 10 (19 September 2026), push aside, screen for screen, and speaks the same API and the same end-to-end encryption. What Android has since gained and this app has not is listed under "Behind Android" below. The Android documents remain the map: `../Android/docs/PLAN.md` for what is built and why, `../android-client-brief.md` for the API. This directory adds only what is particular to iOS:
 
 - `docs/DECISIONS.md`: choices that are not obvious from the code (crypto library, Keychain, project layout), and every place this app deliberately differs from Android.
 
@@ -26,7 +26,7 @@ Requires Xcode 26 (Swift 6 toolchain; the code is in Swift 5 language mode). The
 cd ABCMailboxKit && swift test
 ```
 
-That is the whole test suite: about 140 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
+That is the whole test suite: about 145 tests in a few seconds, on the Mac. It includes the crypto fixtures the Android client is tested against (made by the API's own `services/crypto.js` and by libsodium.js), and whole account, letter and group flows run against a stub server with real Argon2id and real sealed boxes.
 
 To run the app, open `ABCMailbox.xcodeproj`, choose the `ABCMailbox` scheme and a simulator, and run. To sign and run on a phone, set your team under Signing & Capabilities.
 
@@ -74,12 +74,18 @@ The move to end-to-end encryption does not wait for anyone to be reached (API pu
 
 This is the full list from the API's migration guide. Android, as of `cbf93c3`, does only the last two items, so here iOS is ahead of it.
 
+## What is new in the account
+
+The notification feed (`GET /auth/notifications`, API pull request #96) says that a reply arrived, that a letter was printed or mailed, that a letter is waiting for the group, or that a proposed change was decided. Entries carry ids and states, never content, and what they *say* is worded on the phone and names nobody ("A reply to one of your letters has arrived."), because it ends up on a lock screen. The Inbox tab's badge counts unread news plus letters waiting in the outbox; opening the Inbox marks the news read, on this phone and the person's others. With the app open the news is a toast; otherwise it is one notification, which opens the conversation when all its news is about one, and the Inbox when not.
+
+The app fetches the feed when it opens and when iOS grants a background refresh (asked for every six hours; iOS decides). Permission for notifications is asked only when the person taps "Allow notifications" on the Account tab or queues a letter offline, never at launch.
+
 ## Behind Android
 
-As of Android commit `cbf93c3`, not yet in this app:
+As of Android commit `356a743`, not yet in this app:
 
 - **Spanish and Russian** (Android phase 9). Every string here is English, in the Swift source.
-- **Push notifications and the notification feed** (API pull request #96). iPhones are reached through Firebase, so this needs a Firebase project with this app added to it (`GoogleService-Info.plist`), an APNs key from a paid Apple developer account uploaded there, the Push Notifications capability, and a notification service extension to replace the server's bland alert with wording made on the phone. The feed (`GET /auth/notifications`) needs none of that and could be built first.
+- **The push doorbell** (API pull request #96, Android phase 10). iPhones are reached through Firebase, so this needs a Firebase project with this app added to it (`GoogleService-Info.plist`), an APNs key from a paid Apple developer account uploaded there, the Push Notifications capability, and a notification service extension to replace the server's bland alert with wording made on the phone. None of that exists yet on either platform. It will change when the news arrives, not what is shown: a push carries nothing, and the feed below is where the news comes from either way. Registering the device (`POST /auth/device`) and the devices list belong with it.
 - An accessibility pass (Android phase 7c). Fields and buttons are labelled for VoiceOver, but nothing has been listened to.
 
 ## What was verified, and what was not

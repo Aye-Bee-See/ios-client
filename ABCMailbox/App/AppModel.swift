@@ -73,9 +73,14 @@ final class AppModel {
   private(set) var toast: Toast?
   @ObservationIgnored private var toastTask: Task<Void, Never>?
 
-  init(container: AppContainer) { self.container = container }
+  init(container: AppContainer) {
+    self.container = container
+    container.activity.notifier = announcer
+    announcer.onOpen = { [weak self] chat in self?.openFromNotification(chat: chat) }
+  }
 
   let notifier = OutboxNotifier()
+  let announcer = ActivityAnnouncer()
 
   var sessions: SessionRepository { container.sessions }
   var user: SessionUser? { container.sessions.state.user }
@@ -131,6 +136,27 @@ final class AppModel {
     authPath = []
     if goToInbox { tab = .inbox }
     if let message { show(message) }
+  }
+
+  // MARK: What is new (the notification feed, API PR #96)
+
+  /// Letters waiting to go plus news not yet seen: the number on the Inbox tab.
+  var inboxBadge: Int { container.outbox.items.count + container.activity.unread }
+
+  /// The app is open: fetch the news and say it here, as a toast. Looking at the Inbox counts as reading it.
+  func syncActivity() async {
+    let fresh = await container.activity.sync()
+    if let summary = ActivitySummary(fresh) { show(fresh.count == 1 ? summary.body : "\(summary.title). \(summary.body)") }
+    if tab == .inbox, inboxPath.isEmpty { await container.activity.markAllRead() }
+  }
+
+  /// A tapped notification: the conversation when all its news was about one, otherwise the Inbox.
+  func openFromNotification(chat: Int?) {
+    guard user != nil else { return }
+    authPresented = false
+    tab = .inbox
+    inboxPath = chat.map { [.thread(chatId: $0)] } ?? []
+    Task { await container.activity.markAllRead() }
   }
 
   // MARK: Key set-up (API PR #95)

@@ -135,6 +135,10 @@ final class LiveServerTests: XCTestCase {
     let queue = try await app.group.queue(groupId: key.groupId, status: .queued, page: 1, pageSize: 20)
     print("live e2e: member1 read \(readable) letters (\(locked) locked); \(queue.items.filter { !$0.letter.locked }.count) of \(queue.total) queued letters readable")
     XCTAssertGreaterThan(readable, 0, "letters sealed to the group by other clients decrypted here")
+    // The notification feed: fetched, never marked read (that would be a write).
+    let fresh = await app.activity.sync()
+    print("live e2e: member1's feed has \(app.activity.unread) unread; newest: \(fresh.prefix(3).map(\.sentence))")
+    XCTAssertEqual(fresh.count <= app.activity.unread, true)
     let members = try await app.group.members()
     print("live e2e: members \(members.map { "\($0.name)\($0.holdsGroupKey ? " (holds key)" : "")" })")
     try await app.sessions.logout()

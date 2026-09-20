@@ -13,8 +13,10 @@ struct APIEnvelope<T: Decodable>: Decodable {
   let total: Int?
   let page: Int?
   let pageSize: Int?
+  /// Only on the notification feed: how many entries the account has not read.
+  let unread: Int?
 
-  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, total, page, pageSize = "page_size" }
+  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, total, page, unread, pageSize = "page_size" }
 
   /// The payload, or an error a screen can show when the server sent none.
   func required(_ what: String = "response") throws -> T {

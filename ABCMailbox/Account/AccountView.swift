@@ -1,6 +1,7 @@
 import ABCCore
 import Observation
 import SwiftUI
+import UserNotifications
 
 @MainActor @Observable
 final class AccountModel {
@@ -69,6 +70,10 @@ struct AccountView: View {
       if let user = app.user { signedIn(user) } else {
         Text("You are not signed in. Browsing the directory works without an account; writing letters needs one.").font(Theme.bodyLarge)
         Button("Sign in") { app.signIn() }.buttonStyle(.primaryCompact)
+      }
+      if app.user != nil {
+        Divider().overlay(Theme.rule)
+        NotificationsSection(app: app)
       }
       Divider().overlay(Theme.rule)
       OfflineCopySection(app: app)
@@ -143,5 +148,34 @@ struct DevServerSheet: View {
     }
     .onAppear { text = app.container.devServer.baseURL }
     .presentationDetents([.medium, .large])
+  }
+}
+
+/// Whether this phone may show notifications, asked for here and never at launch: a prompt with no
+/// context gets a reflexive "Don't Allow", and iOS does not let an app ask twice.
+struct NotificationsSection: View {
+  let app: AppModel
+  @State private var status: UNAuthorizationStatus?
+  @Environment(\.openURL) private var openURL
+  @Environment(\.scenePhase) private var scenePhase
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Notifications").font(Theme.titleMedium)
+      Muted("When a reply arrives, or a letter of yours is printed or mailed, this phone can tell you. The words name nobody: \"A reply to one of your letters has arrived.\" The app checks for news when you open it and a few times a day; nothing is sent to it from outside yet.", font: Theme.caption)
+      switch status {
+      case .notDetermined?:
+        Button("Allow notifications") { Task { await app.announcer.askPermission(); status = await app.announcer.status() } }.buttonStyle(.outline)
+      case .denied?:
+        Muted("Turned off for this app in the phone's Settings.", font: Theme.caption)
+        Button("Open Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) } }.buttonStyle(.link)
+      case nil:
+        EmptyView()
+      default:
+        Muted("Allowed.", font: Theme.caption)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .task(id: scenePhase) { status = await app.announcer.status() } // coming back from Settings
   }
 }

@@ -15,6 +15,7 @@ public final class AppContainer {
   public let group: GroupRepository
   public let drafts: DraftsRepository
   public let outbox: OutboxRepository
+  public let activity: ActivityRepository
   public let files: LocalFiles
   public let devServer: DevServerRepository
 
@@ -59,6 +60,7 @@ public final class AppContainer {
     let cipher = SecretCipher(store: secrets)
     drafts = draftsDirectory.map { DraftsRepository(cipher: cipher, directory: $0) } ?? DraftsRepository(cipher: cipher)
     outbox = OutboxRepository(directory: outboxDirectory, cipher: cipher, files: files, letters: letters, sessions: sessions)
+    activity = ActivityRepository(api: api, sessions: sessions, defaults: defaults)
     devServer = DevServerRepository(defaults: defaults, holder: holder, sessions: sessions, modes: modes)
   }
 }

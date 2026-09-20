@@ -30,6 +30,8 @@ struct InboxView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Theme.paper)
     .toolbar(.hidden, for: .navigationBar)
+    // The person is looking at their Inbox: the news counts as seen, here and on their other devices.
+    .onAppear { Task { await app.container.activity.markAllRead() } }
     // A different account means different conversations: build the lists again rather than show the last person's.
     .id(app.user?.id)
   }

@@ -2,6 +2,14 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-19: the feed is a badge and a sentence, not a screen; permission is never asked at launch
+
+**Context.** Android built the notification feed (API PR #96) as a badge on the Inbox tab and a system notification, with no list of entries: an entry says "a reply arrived on thread 12", and the Inbox already shows that thread at the top.
+
+**Decision.** The same here. What differs is delivery. Android's WorkManager checks every six hours; iOS grants background refreshes at its own discretion, so most news will be found when the app is opened, and there a system notification is the wrong voice: the app says it as a toast and keeps the badge. Notification permission is asked from the Account tab (and when a letter is first queued offline), where the reason is on screen. iOS lets an app ask once; a prompt at launch spends that on a reflexive "Don't Allow".
+
+**Consequences.** Until push exists, someone who never opens the app hears of a reply late. That is the case for building push, and the feed is the half of push that does the work: the doorbell will only make `ActivityRepository.sync` run sooner.
+
 ## 2026-09-19: the group key is handed over with one confirmation, not silently
 
 **Context.** The API's migration guide (PR #95) has a group member's client do five things after sign-in "without asking". Step 3 is: for every member with keys of their own who does not hold the group key, seal it to them. The guide allows "quietly, or with one confirmation".
