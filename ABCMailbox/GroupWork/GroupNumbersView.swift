@@ -18,8 +18,13 @@ final class GroupNumbersModel {
   var canSave: Bool { !busy && typed != nil && typed != numbers.value??.before }
 
   func load() async {
-    numbers = await .from { try await self.app.container.group.numbers() }
-    if let loaded = numbers.value ?? nil { before = String(loaded.before) }
+    let fresh: Loadable<GroupNumbers?> = await .from { try await self.app.container.group.numbers() }
+    // A failed refresh keeps what is on screen; only a first load shows the error.
+    guard fresh.value != nil || numbers.value == nil else { return }
+    let typedSomething = typed != nil && typed != numbers.value??.before
+    numbers = fresh
+    // What the person is in the middle of typing is theirs; otherwise the field follows the server.
+    if !typedSomething, let loaded = fresh.value ?? nil { before = String(loaded.before) }
   }
 
   func edited() { error = nil }
@@ -53,7 +58,9 @@ struct GroupNumbersView: View {
     }
     .navigationTitle("Your group's numbers")
     .navigationBarTitleDisplayMode(.inline)
-    .task { if model.numbers.value == nil { await model.load() } }
+    // Every time the page comes into view, not once: the count moves whenever anyone in the group marks a letter
+    // mailed (seen on the simulator: the page still said 1 after two more letters had been mailed).
+    .onAppear { Task { await model.load() } }
   }
 
   private func content(_ n: GroupNumbers) -> some View {
