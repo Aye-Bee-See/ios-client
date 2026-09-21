@@ -94,6 +94,8 @@ struct AccountView: View {
     Muted("@\(user.username)", font: Theme.bodyLarge)
     Text(role(user)).font(Theme.bodyMedium)
     Divider().overlay(Theme.rule)
+    // For members of a group: the group's public numbers, and the one of them that a person types.
+    if user.role == Role.chapter, user.chapterId != nil { Button("Your group's numbers") { app.push(.groupNumbers) }.buttonStyle(.link) }
     Button("Change password") { app.push(.changePassword) }.buttonStyle(.link)
     Button("Sign out") { Task { await model.signOut(everywhere: false) } }.buttonStyle(.outlineWide).disabled(model.signingOut)
     Button("Sign out on every device") { Task { await model.signOut(everywhere: true) } }.buttonStyle(.link).disabled(model.signingOut)

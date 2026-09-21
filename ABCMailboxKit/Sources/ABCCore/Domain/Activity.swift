@@ -20,8 +20,19 @@ public struct Activity: Equatable, Identifiable, Sendable {
   public let kind: Kind
   public let chatId: Int?
   public let messageId: Int?
+  /// How many letters this entry is about. A group that marks thirty letters on a letter night tells each
+  /// writer once (API PR #111): `messageId` is then nil, and `chatId` is set only if the letters share a conversation.
+  public var count: Int = 1
 
   public var sentence: String {
+    if count > 1 {
+      switch kind {
+      case .printed: return "\(count) of your letters have been printed."
+      case .mailed: return "\(count) of your letters are in the mail."
+      case .returned: return "\(count) of your letters came back in the mail."
+      default: break
+      }
+    }
     switch kind {
     case .reply: return "A reply to one of your letters has arrived."
     case .printed: return "One of your letters has been printed."

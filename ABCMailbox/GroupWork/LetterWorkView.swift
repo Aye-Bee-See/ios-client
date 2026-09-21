@@ -49,7 +49,13 @@ final class LetterWorkModel {
       app.show("Recorded as returned. The writer has been told." + (reason.doubtsTheAddress ? " If your group knows where they are now, the directory needs correcting." : ""))
       return true
     } catch {
-      app.show(AppError.from(error).userMessage ?? "Could not record the return.")
+      let e = AppError.from(error)
+      if e.isChangedMeanwhile {
+        await load()
+        app.show("Someone else changed this letter a moment ago. This is how it stands now.")
+        return true // the sheet's question has been answered by somebody else; close it and show the letter
+      }
+      app.show(e.userMessage ?? "Could not record the return.")
       return false
     }
   }
@@ -73,6 +79,10 @@ final class LetterWorkModel {
       current.letter = updated
       item = .loaded(current)
       app.show("Marked as \(next.label.lowercased()).")
+    } catch let e as AppError where e.isChangedMeanwhile {
+      // Another volunteer, or a second tap, got there first. The letter is very probably where it was wanted: show it.
+      await load()
+      app.show("Someone else changed this letter a moment ago. This is how it stands now.")
     } catch let e as AppError where e.isLetterHeld {
       // Held since this screen loaded: the person was moved or freed in the meantime. Show it, and let them decide.
       await load()

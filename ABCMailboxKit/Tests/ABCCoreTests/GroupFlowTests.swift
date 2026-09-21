@@ -26,7 +26,7 @@ final class GroupFlowTests: XCTestCase {
   }
 
   private func stateName(_ s: GroupKeyState) -> String {
-    switch s { case .notNeeded: "notNeeded"; case .locked: "locked"; case .notSetUp: "notSetUp"; case .notHeld: "notHeld"; case .ready: "ready"; case .failed: "failed" }
+    switch s { case .notNeeded: "notNeeded"; case .locked: "locked"; case .notSetUp: "notSetUp"; case .notHeld: "notHeld"; case .groupNotActive: "groupNotActive"; case .ready: "ready"; case .failed: "failed" }
   }
 
   func testAWriterNeverNeedsTheKeyringAndInServerModeReadingNeverWaitsForIt() async throws {
@@ -116,7 +116,7 @@ final class GroupFlowTests: XCTestCase {
     let queue = try await group.queue(groupId: 1, status: .queued, page: 1, pageSize: 20)
     XCTAssertEqual(queue.items.map(\.letter.body), ["Dear Jane"])
     XCTAssertEqual(queue.items.first?.prisoner?.inmateId, "A-3")
-    XCTAssertEqual(app.requests(to: "/prisoner/prisoner").count, 1)
+    XCTAssertEqual(app.requests(to: "/prisoner/prisoner").count, 0, "since API PR #111 the row brings the prisoner with it")
 
     // Forward only.
     let printed = try await group.setStatus(messageId: sent.id, status: .printed)

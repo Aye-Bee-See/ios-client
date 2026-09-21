@@ -25,6 +25,8 @@ enum Route: Hashable {
   case handoff(writerId: Int, writerName: String)
   /// End-to-end servers: who in the group holds its key.
   case groupKey
+  /// What the directory says about how much mail the group handles, and the one number of it that a person types.
+  case groupNumbers
   case changePassword
   case deleteAccount
 }

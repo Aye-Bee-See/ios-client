@@ -135,6 +135,11 @@ public struct SupportGroup: Equatable, Identifiable, Sendable {
   public let relayPrisons: [Facility]
   /// How this group supports a particular prisoner, when embedded on that prisoner.
   public let supportDescription: String?
+  /// Letters the group has mailed, as the server publishes it: nil until that reaches twenty, so that a small
+  /// or new group is not put on show. Nil means "show nothing", never "0".
+  public var lettersSent: String? = nil
+  /// Median days from written to mailed over the last 90 days; nil when there is too little to say.
+  public var averageDaysToMail: Int? = nil
 
   init(
     id: Int, name: String, subregion: String? = nil, country: String? = nil, about: String? = nil, website: String? = nil, email: String? = nil,
@@ -147,6 +152,12 @@ public struct SupportGroup: Equatable, Identifiable, Sendable {
   }
 
   public var location: String { [subregion, country].compactMap { $0 }.joined(separator: ", ") }
+
+  func with(lettersSent: String?, averageDaysToMail: Int?) -> SupportGroup {
+    var copy = self
+    copy.lettersSent = lettersSent; copy.averageDaysToMail = averageDaysToMail
+    return copy
+  }
   public var isActive: Bool { accountStatus == nil || accountStatus == "active" }
 }
 

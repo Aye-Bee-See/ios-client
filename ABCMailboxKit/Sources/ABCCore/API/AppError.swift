@@ -55,10 +55,17 @@ public enum AppError: Error, Equatable, Sendable {
     }
   }
 
+  public var isForbidden: Bool { if case .forbidden = self { return true } else { return false } }
   public var isConflict: Bool { if case .conflict = self { return true } else { return false } }
   /// The same Idempotency-Key is being processed right now (a retry racing the original, API PR #97):
   /// wait a second and ask again. Not to be confused with a group's key rotation, which is also a 409.
   public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError") = self { return true } else { return false } }
+  /// A group rotated its key between our reading it and our using it.
+  public var isKeyRotated: Bool { if case .conflict(_, name: "KeyVersionError") = self { return true } else { return false } }
+  /// A status move lost a race: another volunteer, or a double tap, got there first, or the letter was held or
+  /// handed to another group in that moment. The letter is very probably already where the person wanted it,
+  /// so this is "look again", not a failure to show in red.
+  public var isChangedMeanwhile: Bool { if case .conflict(let text?, name: "LetterStatusError") = self { return text.contains("meanwhile") } else { return false } }
   /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
   public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError") = self { return true } else { return false } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }

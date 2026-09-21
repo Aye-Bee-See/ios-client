@@ -29,6 +29,11 @@ struct GroupKeyBanner: View {
           Button(busy ? "Setting up…" : "Set up the group key") { Task { await setUp() } }.buttonStyle(.primaryCompact).disabled(busy)
           ErrorText(error)
         }
+      case .groupNotActive:
+        // Nothing to set up, and nothing to offer: every group key endpoint refuses this group until an admin activates it.
+        notice("Your group is not active yet", GroupKeyState.groupNotActiveText) {
+          Button("Check again") { Task { await app.container.group.refreshKeyState() } }.buttonStyle(.outline)
+        }
       case .notHeld:
         notice(
           "You have not been given the group key yet",

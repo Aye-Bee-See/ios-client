@@ -13,7 +13,8 @@ struct GroupInboxView: View {
     VStack(alignment: .leading, spacing: 0) {
       // Where this member stands with the group key matters once letters are encrypted. Before the
       // switch the server reads for everyone, and the key set-up goes on underneath without a word.
-      if app.container.modes.mode == .e2e { GroupKeyBanner(app: app) }
+      // A group that is not active yet is told so in either mode: it cannot print or manage writers either.
+      if app.container.modes.mode == .e2e || app.container.keyring.state.isGroupNotActive { GroupKeyBanner(app: app) }
       MembersWaitingNotice(app: app)
       Picker("Section", selection: $tab) {
         Text("To print").tag(0)
@@ -51,6 +52,11 @@ private struct QueueTab: View {
   let groupId: Int?
   @State private var filter: QueueFilter? = .status(.queued)
   @State private var loader: PagedLoader<QueueItem>
+  // Letter nights (API PR #111): tick several letters, mark them together. All or none.
+  @State private var selecting = false
+  @State private var selected: Set<Int> = []
+  @State private var busy = false
+  @State private var confirmMailed = false
 
   init(app: AppModel, groupId: Int?) {
     self.app = app
@@ -75,15 +81,83 @@ private struct QueueTab: View {
       Text("This account is not in a group yet. A network admin has to set your group before you can see its letters.").font(Theme.bodyLarge).padding(20)
     } else {
       PagedList(loader: loader, emptyText: emptyText) {
-        ChipRow(options: queueFilters, selected: $filter, showAll: false).padding(.horizontal, 20).padding(.vertical, 8)
+        ChipRow(options: queueFilters, selected: $filter, showAll: false).padding(.horizontal, 20).padding(.vertical, 8).disabled(selecting)
+        if nextStatus != nil, !selecting, loader.items.count > 1 {
+          Button("Select several…") { selecting = true }.buttonStyle(.link).padding(.horizontal, 20).padding(.bottom, 4).accessibilityIdentifier("selectSeveral")
+        }
       } row: { q in
-        QueueRow(item: q) { app.push(.letterWork(messageId: q.letter.id)) }
+        if selecting {
+          // A held letter is a decision of its own, made on its own page: it cannot be ticked.
+          QueueRow(item: q, tick: q.letter.isHeld ? .cannot : selected.contains(q.id) ? .on : .off) { toggle(q) }
+        } else {
+          QueueRow(item: q) { app.push(.letterWork(messageId: q.letter.id)) }
+        }
       }
+      .safeAreaInset(edge: .bottom) { if selecting { selectionBar } }
       .onAppear { Task { await loader.refresh() } }
       .onChange(of: filter) {
         let chosen = filter ?? .status(.queued)
         Task { await loader.reset(fetch: Self.fetch(app, groupId, chosen)) }
       }
+      .confirmationDialog("Mark \(Format.plural(selected.count, "letter")) as mailed?", isPresented: $confirmMailed, titleVisibility: .visible) {
+        Button("They are in the mail") { Task { await markSelected() } }
+        Button("Not yet", role: .cancel) {}
+      } message: {
+        Text("Do this once the letters are actually in the mail. Their writers will see them as mailed, and it cannot be moved back.")
+      }
+    }
+  }
+
+  /// Where the letters of the list on screen go next, if they can be moved together at all.
+  private var nextStatus: LetterStatus? {
+    switch filter ?? .status(.queued) {
+    case .status(.queued): return .printed
+    case .status(.printed): return .mailed
+    default: return nil
+    }
+  }
+
+  private func toggle(_ q: QueueItem) {
+    guard !q.letter.isHeld, !busy else { return }
+    if selected.contains(q.id) { selected.remove(q.id) } else if selected.count < GroupRepository.batchLimit { selected.insert(q.id) } else {
+      app.show("At most \(GroupRepository.batchLimit) letters can be marked at once.")
+    }
+  }
+
+  private var selectionBar: some View {
+    HStack(spacing: 12) {
+      Button("Cancel") { selecting = false; selected = [] }.buttonStyle(.link)
+      Spacer()
+      Muted("\(selected.count) selected")
+      Button(busy ? "Marking…" : "Mark as \(nextStatus?.label.lowercased() ?? "")") {
+        if nextStatus == .mailed { confirmMailed = true } else { Task { await markSelected() } }
+      }
+      .buttonStyle(.primaryCompact).disabled(selected.isEmpty || busy).accessibilityIdentifier("markSelected")
+    }
+    .padding(.horizontal, 20).padding(.vertical, 10)
+    .background(Theme.paperRaised)
+    .overlay(alignment: .top) { Divider().overlay(Theme.rule) }
+  }
+
+  private func markSelected() async {
+    guard let next = nextStatus, !selected.isEmpty, !busy else { return }
+    busy = true
+    defer { busy = false }
+    do {
+      // In the order of the list, so that a refusal names a letter where the person expects to find it.
+      let ids = loader.items.map(\.id).filter(selected.contains)
+      let moved = try await app.container.group.setStatusOfMany(messageIds: ids, status: next)
+      app.show("\(Format.plural(moved, "letter")) marked as \(next.label.lowercased()).")
+      selecting = false; selected = []
+      await loader.refresh()
+    } catch let e as AppError where e.isChangedMeanwhile {
+      // Another volunteer got there first. Nothing moved in this request, and the list is out of date: look again.
+      app.show("Someone else has just changed one of these letters. The list has been refreshed; nothing was marked.")
+      await loader.refresh()
+      selected.formIntersection(loader.items.map(\.id))
+    } catch {
+      // All or none: the ticks stay, so that the one letter named can be unticked and the rest tried again.
+      app.show("Nothing was changed. " + (AppError.from(error).userMessage ?? "The letters could not be marked."))
     }
   }
 
@@ -100,6 +174,9 @@ private struct QueueTab: View {
 
 private struct QueueRow: View {
   let item: QueueItem
+  /// Selecting several: whether this row shows a tick box, and what is in it.
+  enum Tick { case notSelecting, off, on, cannot }
+  var tick = Tick.notSelecting
   let action: () -> Void
 
   private var heldWord: String {
@@ -119,12 +196,26 @@ private struct QueueRow: View {
       "~\(Format.plural(pages, "page"))",
       letter.attachments.isEmpty ? nil : Format.plural(letter.attachments.count, "file"),
     ]
-    RecordRow(
+    let row = RecordRow(
       title: item.prisoner?.name ?? "Prisoner #\(letter.prisonerId ?? 0)",
       secondary: item.prisoner?.facility.map { $0.name + ($0.country.map { ", \($0)" } ?? "") },
       subtitle: facts.compactMap { $0 }.joined(separator: " · "),
-      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.relayNote.map { "Note: \($0)" }, action: action
+      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.relayNote.map { "Note: \($0)" },
+      horizontalPadding: tick == .notSelecting ? 20 : 8, action: action
     )
+    if tick == .notSelecting {
+      row
+    } else {
+      HStack(spacing: 0) {
+        Image(systemName: tick == .on ? "checkmark.circle.fill" : tick == .cannot ? "circle.slash" : "circle")
+          .font(.title3).foregroundStyle(tick == .on ? Theme.red : Theme.inkMuted).padding(.leading, 20)
+          .accessibilityHidden(true)
+        row
+      }
+      .opacity(tick == .cannot ? 0.5 : 1)
+      .accessibilityAddTraits(tick == .on ? .isSelected : [])
+      .accessibilityHint(tick == .cannot ? "Held letters are decided one at a time, on their own page." : "")
+    }
   }
 }
 

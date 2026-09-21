@@ -13,6 +13,19 @@ public struct ManagedWriter: Equatable, Identifiable, Hashable, Sendable {
   public var hasLiveToken: Bool { tokenExpiresAt.map { $0 > Date() } ?? false }
 }
 
+/// A group's numbers as its members see them (API PR #112). Only `before` is typed by anyone; the server counts
+/// the rest. `published` is what the public page says: nil until the total reaches twenty.
+public struct GroupNumbers: Equatable, Sendable {
+  public let groupName: String
+  public let before: Int
+  public let countedHere: Int
+  public let published: String?
+  public let averageDaysToMail: Int?
+  public var total: Int { before + countedHere }
+  /// What the server publishes from, as the API documents it.
+  public static let shownFrom = 20
+}
+
 /// Someone in the group, and whether they can open letters sealed to it.
 public struct GroupMember: Equatable, Identifiable, Sendable {
   public let id: Int

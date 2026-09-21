@@ -108,6 +108,7 @@ struct RouteView: View {
     case .addWriter: AddWriterView(app: app)
     case .handoff(let writerId, let writerName): HandoffView(app: app, writerId: writerId, writerName: writerName)
     case .groupKey: GroupKeyView(app: app)
+    case .groupNumbers: GroupNumbersView(app: app)
     case .changePassword: ChangePasswordView(app: app)
     case .deleteAccount: DeleteAccountView(app: app)
     }

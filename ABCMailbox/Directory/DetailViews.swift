@@ -185,6 +185,9 @@ struct GroupView: View {
 
       TagRow(tags: g.services.map(ServiceLabels.label))
       Muted(NetworkRoles.label(g.networkRole))
+      // Counted by the server and absent for a small or new group (API PR #112). KeyValue draws nothing for nil: no "0 letters", no empty label.
+      KeyValue("Letters mailed", g.lettersSent)
+      KeyValue("Usual time from written to mailed", g.averageDaysToMail.map { Format.plural($0, "day") })
 
       if let about = g.about { SectionTitle("About"); Text(about).font(Theme.bodyLarge) }
 

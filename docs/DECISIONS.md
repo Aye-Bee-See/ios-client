@@ -2,6 +2,19 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-21: several letters at once are all or none on the phone too
+
+**Context.** API PR #111: `PUT /messaging/status/batch` moves up to 200 letters, all or none, and tells each writer once.
+
+**Decisions.** Taken with Android's, so that a volunteer who uses both sees one behaviour.
+
+- *More than 200 is refused, not split.* Two requests of 200 and 50 can half succeed, and the volunteer would have to work out which half. The limit is said before any request is made.
+- *A held letter cannot be ticked.* Printing one needs `release: true`, which this app only ever sends from a confirmation about that one letter. A batch that released holds would make the decision an oversight again.
+- *A refusal keeps the ticks.* The server's sentence names the letter that stopped the rest; the volunteer unticks it and tries again. Clearing the selection would make them find thirty letters twice.
+- *"Changed by someone else meanwhile" is news, not an error.* It reloads and says how things stand. The brief says why: the letter is very probably already where the person wanted it.
+- *An older API's "Cannot PUT" is translated.* As a 404 it would read "not found", which a volunteer would take for a missing letter.
+- *An inactive group is a key state of its own* (`groupNotActive`), found by a 403 from a group key endpoint, because the key bundle says the same thing ("no key") for a group that has not set one up and a group that may not. It is shown in server mode too: such a group cannot print either.
+
 ## 2026-09-20: returned and held letters: the phone copies, the person decides
 
 **Context.** API PRs #105 (a `returned` status with a reason, a note, and `resendOf`) and #106 (queued letters held when their prisoner is moved or freed; `release: true` to print one anyway).

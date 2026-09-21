@@ -150,7 +150,8 @@ public final class APIClient: Sendable {
       return .validation([info ?? "The request was rejected."])
     case 401: return .unauthorized(info)
     case 403: return .forbidden(info ?? "You are not allowed to do that.")
-    case 404: return .notFound(info)
+    // Like a 409, a 404 may carry the useful sentence in `error` ("Message 99999 not found") under a general `info`.
+    case 404: return .notFound(envelope?.error ?? info)
     // Lifecycle refusals put the useful sentence in `error` ("A printed letter cannot move to queued"); `info` is generic.
     case 409: return .conflict(envelope?.error ?? info, name: envelope?.name)
     case 410: return .gone(info)

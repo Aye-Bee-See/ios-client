@@ -318,4 +318,64 @@ final class LiveServerTests: XCTestCase {
     XCTAssertTrue(queue.items.contains { $0.id == direct.id }, "the group the writer chose now has it to print")
     _ = try await member.group.setStatus(messageId: direct.id, status: .printed) // no longer held: no release needed
   }
+
+  /// Letter nights and a group's numbers (API PRs #111 and #112), against a real API. It moves letters and edits
+  /// the group, so it only runs against a throwaway server, set up as for the test above:
+  ///
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerLetterNightsAndNumbers
+  func testThrowawayServerLetterNightsAndNumbers() async throws {
+    let writer = try container("ABC_LIVE_THROWAWAY"), member = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test moves letters") }
+    await writer.modes.refresh(); await member.modes.refresh()
+    try await writer.sessions.login(username: "user1", password: "password1")
+    try await member.sessions.login(username: "member1", password: "password1")
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    await writer.activity.sync()
+
+    // Three letters to someone whose facility this group mails to (dev-seed: prison 1).
+    var ids: [Int] = []
+    for i in 1...3 { ids.append(try await writer.letters.send(NewLetter(prisonerId: 1, body: "Letter night \(i)", relayNote: nil, relayChapter: nil)).id) }
+
+    // 3.1 One request: every row brings the prisoner, the facility and its address.
+    let queue = try await member.group.queue(groupId: groupId, status: .queued, page: 1, pageSize: 100)
+    let mine = queue.items.filter { ids.contains($0.id) }
+    XCTAssertEqual(mine.count, 3)
+    for row in mine {
+      XCTAssertNotNil(row.prisoner?.facility, "prisoner_details with prison_details on every row")
+      XCTAssertFalse(row.prisoner?.facility?.addressLines.isEmpty ?? true, "the address is what the envelope needs")
+    }
+    print("live #111: a queue row is addressed to \(mine.first?.prisoner?.birthName ?? mine.first?.prisoner?.name ?? "?"), \(mine.first?.prisoner?.facility?.name ?? "?"), \(mine.first?.prisoner?.facility?.addressLines ?? [])")
+
+    // 3.2 All or none. One of the three is printed by itself first, so the three together must be refused.
+    _ = try await member.group.setStatus(messageId: ids[1], status: .printed)
+    await assertThrowsAppError(try await member.group.setStatusOfMany(messageIds: ids, status: .printed)) {
+      print("live #111: the refusal reads: \($0.userMessage ?? "nil")")
+      XCTAssertTrue($0.isConflict); XCTAssertTrue($0.userMessage?.contains("\(ids[1])") == true, "it names the letter")
+    }
+    let untouched = try await member.group.queueItem(messageId: ids[0])
+    XCTAssertEqual(untouched.letter.status, .queued, "nothing moved")
+    await writer.activity.sync()
+
+    let moved = try await member.group.setStatusOfMany(messageIds: [ids[0], ids[2]], status: .printed)
+    XCTAssertEqual(moved, 2)
+    // 1.2 The writer is told once, with how many.
+    let news = await writer.activity.sync()
+    print("live #111: the writer's feed says: \(news.map(\.sentence))")
+    XCTAssertEqual(news.count, 1); XCTAssertEqual(news.first?.kind, .printed); XCTAssertEqual(news.first?.count, 2); XCTAssertNil(news.first?.messageId)
+
+    // 3.4 A group's numbers. Mailing the three counts them; twenty-five from before puts the group over twenty.
+    let before = try await member.group.numbers()
+    let start = try XCTUnwrap(before, "this server counts")
+    XCTAssertNil(start.published, "nothing, not 0, for a group under twenty")
+    let mailed = try await member.group.setStatusOfMany(messageIds: ids, status: .mailed)
+    XCTAssertEqual(mailed, 3)
+    try await member.group.setLettersSentBefore(25)
+    let after = try await member.group.numbers()
+    let numbers = try XCTUnwrap(after)
+    print("live #112: the group's numbers: \(numbers)")
+    XCTAssertEqual(numbers.before, 25); XCTAssertEqual(numbers.countedHere, start.countedHere + 3); XCTAssertEqual(numbers.published, String(numbers.total))
+    let page = try await writer.directory.group(id: groupId)
+    XCTAssertEqual(page.lettersSent, numbers.published, "what the public page shows is what the server publishes")
+  }
 }

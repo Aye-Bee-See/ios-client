@@ -227,6 +227,7 @@ final class LetterCodec {
     case .failed(let error): throw error
     case .locked: throw AppError.lettersLocked
     case .notSetUp: throw AppError.forbidden("Your group has not set up its encryption key yet. Open the Inbox and choose \"Set up the group key\".")
+    case .groupNotActive: throw AppError.forbidden(GroupKeyState.groupNotActiveText)
     case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask a member who holds it to hand it to you from their Inbox.")
     case .notNeeded: throw AppError.forbidden("This account is not a member of a group.")
     }

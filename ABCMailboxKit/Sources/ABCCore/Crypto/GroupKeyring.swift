@@ -25,11 +25,17 @@ public enum GroupKeyState: Sendable {
   case locked
   /// Nobody has made the group's keypair yet. Any member can, once.
   case notSetUp(groupId: Int)
+  /// The group is waiting for the network's approval, or is suspended. Its accounts read what the public reads
+  /// and get 403 on every group key endpoint, so there is nothing to set up yet, and nothing should be offered.
+  case groupNotActive(groupId: Int)
   /// The group has a key, but no holder has handed it to this member.
   case notHeld(groupId: Int)
   case ready(GroupKey)
   case failed(AppError)
 
+  public static let groupNotActiveText = "Your group is waiting for the network's approval, or has been suspended. Until it is active it cannot hold a key, print letters or manage writers. An admin activates it; nothing needs doing on this phone."
+
+  public var isGroupNotActive: Bool { if case .groupNotActive = self { return true } else { return false } }
   public var isReady: Bool { if case .ready = self { return true } else { return false } }
 }
 
@@ -118,7 +124,17 @@ public final class GroupKeyring {
       return set(.failed(.from(error)))
     }
     let groupId = org?.chapterId ?? me.chapterId ?? 0
-    guard let publicKey = org?.chapterPublicKey else { return set(.notSetUp(groupId: groupId)) }
+    guard let publicKey = org?.chapterPublicKey else {
+      // "No key yet" is also all a pending or suspended group's member is told. Asking any group key endpoint
+      // tells them apart: for such a group it answers 403. Without this the app offers, and at sign-in tries,
+      // a set-up that can only be refused.
+      do {
+        let _: APIEnvelope<MemberKeysDTO> = try await api.get("auth/member-keys", query: [("chapter", String(groupId))])
+      } catch let e as AppError where e.isForbidden {
+        return set(.groupNotActive(groupId: groupId))
+      } catch {}
+      return set(.notSetUp(groupId: groupId))
+    }
     guard let sealed = org?.wrappedOrgPrivateKey,
           // Sealed to a key this member no longer has (they recovered onto a new keypair), or tampered with.
           let groupPair = try? GroupKeys.open(sealed, holder: mine, expectedPublicKey: publicKey)

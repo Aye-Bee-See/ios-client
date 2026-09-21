@@ -93,9 +93,17 @@ struct ChapterDTO: Decodable {
   let relayPrisons: [PrisonDTO]?
   /// Present when the chapter is embedded on a prisoner as a support group.
   let prisonerSupport: PrisonerSupportDTO?
+  // A group's numbers (API PR #112). The first two are counted by the server and are null for a small or new
+  // group; `lettersSent` is documented as a string and has been a number, so it is read as either.
+  let lettersSent: JSONValue?
+  let averageTimeDays: Int?
+  /// Staff only.
+  let lettersSentBefore: Int?
+  let lettersCounted: Int?
 
   private enum CodingKeys: String, CodingKey {
     case id, name, location, subregion, country, about, website, email, socialLinks, services, announcement, networkRole, accountStatus
+    case lettersSent, averageTimeDays, lettersSentBefore, lettersCounted
     case supportedPrisoners = "supported_prisoners", relayPrisons = "relay_prisons", prisonerSupport = "PrisonerSupport"
   }
 }

@@ -56,7 +56,9 @@ public final class ActivityRepository {
       if case .string(let s)? = e.detail?["status"] { status = s }
       var held = 0
       if case .number(let n)? = e.detail?["held"] { held = Int(n) }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held), chatId: e.chat, messageId: e.message)
+      var count = 1
+      if case .number(let n)? = e.detail?["count"], n >= 1 { count = Int(n) }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held), chatId: e.chat, messageId: e.message, count: count)
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
     if announce, let summary = ActivitySummary(fresh) { notifier?.show(summary, unread: unread) }

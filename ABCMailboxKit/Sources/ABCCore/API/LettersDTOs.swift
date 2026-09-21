@@ -106,11 +106,13 @@ struct MessageDTO: Decodable {
   let heldReason: String?
   let resendOf: Int?
   let resentAs: [ResentAsDTO]?
+  /// With `full=true` since API PR #111: who the letter goes to, with the facility, its address and its rules.
+  let prisonerDetails: PrisonerDTO?
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
     case returnReason, heldReason, resendOf
-    case resentAs = "resent_as"
+    case resentAs = "resent_as", prisonerDetails = "prisoner_details"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"
   }

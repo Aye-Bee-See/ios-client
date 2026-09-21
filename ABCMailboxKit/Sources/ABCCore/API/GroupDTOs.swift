@@ -47,10 +47,29 @@ struct GroupKeyRequest: Encodable {
   let wrappedOrgPrivateKey: String
 }
 
+/// `keyVersion`: the version of the group key that was sealed. If the group rotated meanwhile the server answers
+/// 409 `KeyVersionError`, and a stale key is not handed on.
 struct MemberKeyRequest: Encodable {
   let chapter: Int
   let user: Int
   let wrappedOrgPrivateKey: String
+  var keyVersion: Int?
+}
+
+/// Several letters moved together, all or none (API PR #111). `reason` and `note` go with `returned` only.
+struct BatchStatusRequest: Encodable {
+  let ids: [Int]
+  let status: String
+}
+
+struct BatchStatusDTO: Decodable {
+  let count: Int?
+}
+
+/// Only the id and the one field a person types (API PR #112): the rest of a group's numbers are the server's.
+struct LettersSentBeforeRequest: Encodable {
+  let id: Int
+  let lettersSentBefore: Int
 }
 
 struct MemberRef: Encodable {

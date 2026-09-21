@@ -90,6 +90,7 @@ extension ChapterDTO {
       relayPrisons: (relayPrisons ?? []).map { $0.toDomain(catalog) },
       supportDescription: prisonerSupport?.description?.nonBlank
     )
+    .with(lettersSent: lettersSent?.text?.trimmingCharacters(in: .whitespaces).nonBlank.flatMap { $0 == "0" ? nil : $0 }, averageDaysToMail: averageTimeDays.flatMap { $0 > 0 ? $0 : nil })
   }
 }
 

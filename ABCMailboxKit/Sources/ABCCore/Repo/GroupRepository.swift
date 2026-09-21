@@ -36,7 +36,8 @@ public final class GroupRepository {
     }
   }
 
-  // Queue rows name the prisoner by id only, so each distinct prisoner is fetched once and remembered.
+  // Since API PR #111 a queue row read with `full=true` brings its prisoner and facility with it. Against an older
+  // API a row names the prisoner by id only, and then each distinct prisoner is fetched once and remembered, as before.
   private var prisoners: [Int: Prisoner] = [:]
   private func prisoner(_ id: Int) async -> Prisoner? {
     if let known = prisoners[id] { return known }
@@ -52,18 +53,62 @@ public final class GroupRepository {
 
   private func queue(groupId: Int, query: [(String, String?)], page: Int, pageSize: Int) async throws -> Page<QueueItem> {
     await codec.ready()
-    let envelope: APIEnvelope<[MessageDTO]> = try await api.get("messaging/messages", query: [("relayChapter", String(groupId))] + query + [("page", String(page)), ("page_size", String(pageSize))])
+    let envelope: APIEnvelope<[MessageDTO]> = try await api.get("messaging/messages", query: [("relayChapter", String(groupId))] + query + [("full", "true"), ("page", String(page)), ("page_size", String(pageSize))])
     let page: Page<MessageDTO> = envelope.toPage()
     var items: [QueueItem] = []
-    for dto in page.items { items.append(QueueItem(letter: codec.incoming(dto), prisoner: await prisoner(dto.prisoner))) }
+    for dto in page.items { items.append(await queueItem(dto)) }
     return Page(items: items, total: page.total, page: page.page, pageSize: page.pageSize)
   }
 
+  private func queueItem(_ dto: MessageDTO) async -> QueueItem {
+    let letter = codec.incoming(dto)
+    if let details = dto.prisonerDetails { return QueueItem(letter: letter, prisoner: details.toDomain()) }
+    return QueueItem(letter: letter, prisoner: await prisoner(dto.prisoner))
+  }
+
   public func queueItem(messageId: Int) async throws -> QueueItem {
-    let letter = try await letters.letter(messageId: messageId)
-    var found: Prisoner?
-    if let id = letter.prisonerId { found = await prisoner(id) }
-    return QueueItem(letter: letter, prisoner: found)
+    await codec.ready()
+    return await queueItem(try await letters.message(messageId))
+  }
+
+  /// The most the API moves in one request. More than that would stop being all-or-none, so it is refused, not split quietly.
+  public static let batchLimit = 200
+
+  /// Moves several letters together, all or none (API PR #111), and answers how many moved. A refusal names the
+  /// letter that stopped the rest, and nothing has changed. Held letters are not for this: each one is a decision.
+  public func setStatusOfMany(messageIds: [Int], status: LetterStatus) async throws -> Int {
+    var ids: [Int] = []
+    for id in messageIds where !ids.contains(id) { ids.append(id) }
+    guard !ids.isEmpty else { return 0 }
+    guard ids.count <= Self.batchLimit else { throw AppError.validation(["At most \(Self.batchLimit) letters can be marked at once."]) }
+    do {
+      let envelope: APIEnvelope<BatchStatusDTO> = try await api.send("PUT", "messaging/status/batch", body: BatchStatusRequest(ids: ids, status: status.key))
+      return envelope.data?.count ?? ids.count
+    } catch AppError.notFound(let text) where text?.hasPrefix("Cannot ") == true {
+      // An API from before PR #111 has no such address, and Express says "Cannot PUT /…". Say that, not
+      // "not found", which would read as a missing letter ("Message 42 not found").
+      throw AppError.server(status: 404, info: "This server cannot mark several letters at once yet. Mark them one at a time.")
+    }
+  }
+
+  // MARK: - The group's numbers (API PR #112)
+
+  /// Nil when the server does not count yet (an API from before PR #112).
+  public func numbers() async throws -> GroupNumbers? {
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    let envelope: APIEnvelope<ChapterDTO> = try await api.get("chapter/chapter", query: [("id", String(groupId))])
+    let dto = try envelope.required("group")
+    // Staff-only fields: absent means the server is older than the counting, not that the count is zero.
+    guard dto.lettersSentBefore != nil || dto.lettersCounted != nil else { return nil }
+    let group = dto.toDomain()
+    return GroupNumbers(groupName: group.name, before: dto.lettersSentBefore ?? 0, countedHere: dto.lettersCounted ?? 0, published: group.lettersSent, averageDaysToMail: group.averageDaysToMail)
+  }
+
+  public func setLettersSentBefore(_ count: Int) async throws {
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    guard count >= 0 else { throw AppError.validation(["The number cannot be negative."]) }
+    // Only the id and the one field: `lettersSent` and `averageTimeDays` are the server's, and sending them changes nothing.
+    try await api.send("PUT", "chapter/chapter", body: LettersSentBeforeRequest(id: groupId, lettersSentBefore: count))
   }
 
   /// Forward only: queued, printed, mailed. Anything else is a 409 whose sentence says why.
@@ -289,7 +334,13 @@ public final class GroupRepository {
       throw AppError.validation(["That member has no key of their own yet. They get one the first time they sign in; hand them the group key after that."])
     }
     let sealed = try LetterCodec.sealing { try GroupKeys.sealPrivateKey(group.keyPair.privateKey, to: theirKey) }
-    try await api.send("PUT", "auth/member-key", body: MemberKeyRequest(chapter: group.groupId, user: memberId, wrappedOrgPrivateKey: sealed))
+    do {
+      try await api.send("PUT", "auth/member-key", body: MemberKeyRequest(chapter: group.groupId, user: memberId, wrappedOrgPrivateKey: sealed, keyVersion: group.version))
+    } catch let e as AppError where e.isKeyRotated {
+      // The group rotated its key while this phone was sealing the old one. Forget the old one now; the next try uses the new.
+      await keyring.load(force: true, anyMode: true)
+      throw AppError.conflict("Your group changed its key a moment ago. The new one has been fetched; try again.", name: "KeyVersionError")
+    }
   }
 
   /// Stops handing the key out. It cannot take back a key already opened; that needs a rotation.

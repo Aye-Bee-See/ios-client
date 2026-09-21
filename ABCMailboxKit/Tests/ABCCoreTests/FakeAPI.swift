@@ -39,6 +39,15 @@ final class FakeAPI: @unchecked Sendable {
   var predatesPasswordOnDelete = false
   /// An API from before PR #106: `held` is not a filter it knows, so it is ignored.
   var predatesHeldLetters = false
+  /// An API from before PR #111: queue rows name the prisoner by id only, and there is no batch address.
+  var predatesLetterNights = false
+  /// Groups waiting for approval, or suspended: every group key endpoint answers 403 (the brief of 21 September, 1.10).
+  var inactiveGroups: Set<Int> = []
+  /// A group's numbers (API PR #112), by group id. `lettersSent` stays null until before + counted reaches twenty.
+  var lettersSentBefore: [Int: Int] = [:]
+  var lettersCounted: [Int: Int] = [:]
+  /// An API from before PR #112 sends none of the counting fields.
+  var predatesGroupNumbers = false
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -112,6 +121,10 @@ final class FakeAPI: @unchecked Sendable {
       let detail: [String: Any] = event == "prisoner.moved" ? ["prisoner": prisoner, "prison": 2, "held": waiting[writer] ?? 0] : ["prisoner": prisoner, "status": "free", "held": waiting[writer] ?? 0]
       tell(writer, event, chat: prisoner, detail: detail)
     }
+  }
+
+  private func prisonerJSON(_ pid: Int) -> [String: Any] {
+    ["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]]
   }
 
   private func caller(_ r: Recorded) -> Account? {
@@ -298,11 +311,16 @@ final class FakeAPI: @unchecked Sendable {
 
     case ("GET", "/auth/member-keys"):
       let g = r.query["chapter"].flatMap(Int.init) ?? 0
+      if inactiveGroups.contains(g) { return .error(403, info: "Your group is not active.") }
       return .data(["chapter": g, "members": accounts.filter { $0.role == "chapter" && $0.chapterId == g }.map { m -> [String: Any] in
         ["id": m.id, "username": m.username, "name": m.name ?? NSNull(), "publicKey": m.keys["publicKey"] ?? NSNull(), "holdsGroupKey": memberKeys[g]?[m.id] != nil]
       }])
 
     case ("PUT", "/auth/member-key"):
+      if inactiveGroups.contains(body["chapter"] as? Int ?? 0) { return .error(403, info: "Your group is not active.") }
+      if let sealedFor = body["keyVersion"] as? Int, sealedFor != groupKeys[body["chapter"] as? Int ?? 0]?.version {
+        return .error(409, info: "Error saving.", extra: ["name": "KeyVersionError", "error": "That group rotated its key."])
+      }
       memberKeys[body["chapter"] as! Int, default: [:]][body["user"] as! Int] = body["wrappedOrgPrivateKey"] as? String
       return .data([:])
 
@@ -384,7 +402,55 @@ final class FakeAPI: @unchecked Sendable {
         if !predatesHeldLetters, let held = r.query["held"], (m["heldReason"] is String) != (held == "true") { return false }
         return true
       }
-      return .data(rows.map { visible($0, to: a) }, extra: ["total": rows.count, "page": 1, "page_size": 20])
+      let full = r.query["full"] == "true" && !predatesLetterNights
+      return .data(rows.map { m -> [String: Any] in
+        var row = visible(m, to: a)
+        if full, let pid = m["prisoner"] as? Int { row["prisoner_details"] = prisonerJSON(pid) }
+        return row
+      }, extra: ["total": rows.count, "page": 1, "page_size": 20])
+
+    case ("PUT", "/messaging/status/batch"):
+      if predatesLetterNights { return .error(404, info: "Cannot PUT /messaging/status/batch") }
+      guard caller(r) != nil, let ids = body["ids"] as? [Int], let to = body["status"] as? String else { return .error(400, extra: ["errors": ["ids must be a list of letter ids."]]) }
+      let order = ["queued", "printed", "mailed", "returned"]
+      // All or none: look at every letter before touching one.
+      for id in ids {
+        guard let m = messages.first(where: { $0["id"] as? Int == id }) else { return .error(404, info: "Error updating letter status.", extra: ["error": "Message \(id) not found"]) }
+        let from = m["status"] as? String ?? ""
+        guard let f = order.firstIndex(of: from), let t = order.firstIndex(of: to), t == f + 1 else {
+          return .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "Letter \(id): a \(from) letter cannot move to \(to)."])
+        }
+        if m["heldReason"] is String { return .error(409, info: "Error updating letter status.", extra: ["name": "LetterHeldError", "error": "Letter \(id) is held."]) }
+      }
+      var byWriter: [Int: [Int]] = [:]
+      for i in messages.indices where ids.contains(messages[i]["id"] as? Int ?? -1) {
+        messages[i]["status"] = to
+        if to == "mailed", let g = messages[i]["relayChapter"] as? Int { lettersCounted[g, default: 0] += 1 }
+        byWriter[messages[i]["user"] as? Int ?? 0, default: []].append(messages[i]["id"] as? Int ?? 0)
+      }
+      // One feed entry per writer, however many of their letters moved (PR #111).
+      for (writer, moved) in byWriter {
+        if moved.count == 1 { tellLocked(writer, "letter.status", chat: 7, message: moved[0], detail: ["status": to]) }
+        else { tellLocked(writer, "letter.status", chat: 7, message: nil, detail: ["status": to, "count": moved.count, "messages": moved]) }
+      }
+      return .data(["status": to, "count": ids.count, "ids": ids])
+
+    case ("GET", "/chapter/chapter"):
+      let g = r.query["id"].flatMap(Int.init) ?? 0
+      var group: [String: Any] = ["id": g, "name": "Test Chapter", "accountStatus": inactiveGroups.contains(g) ? "pending" : "active"]
+      if !predatesGroupNumbers {
+        let total = (lettersSentBefore[g] ?? 0) + (lettersCounted[g] ?? 0)
+        group["lettersSent"] = total >= 20 ? String(total) : NSNull()
+        group["averageTimeDays"] = total >= 20 ? 6 : NSNull()
+        if let a = caller(r), a.chapterId == g { group["lettersSentBefore"] = lettersSentBefore[g] ?? 0; group["lettersCounted"] = lettersCounted[g] ?? 0 }
+      }
+      return .data(group)
+
+    case ("PUT", "/chapter/chapter"):
+      guard let a = caller(r), let g = body["id"] as? Int, a.chapterId == g else { return .error(403, info: "Not your group.") }
+      // Counted by the server, not typed: sending them changes nothing.
+      if let before = body["lettersSentBefore"] as? Int { lettersSentBefore[g] = before }
+      return .data([:])
 
     case ("PUT", "/messaging/status"):
       guard let a = caller(r), let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
@@ -402,6 +468,7 @@ final class FakeAPI: @unchecked Sendable {
       if let held = messages[i]["heldReason"] as? String, body["release"] as? Bool != true {
         return .error(409, info: "Error updating letter status.", extra: ["name": "LetterHeldError", "error": "This letter is held (\(held)). Send release: true to go ahead with it anyway."])
       }
+      if to == "mailed", let g = messages[i]["relayChapter"] as? Int { lettersCounted[g, default: 0] += 1 }
       messages[i]["status"] = to; messages[i]["heldReason"] = nil; messages[i]["returnReason"] = to == "returned" ? reason : nil
       var history = messages[i]["status_history"] as? [[String: Any]] ?? []
       history.append(["fromStatus": from, "toStatus": to, "changedBy": a.id, "createdAt": "2026-09-20T10:00:00.000Z", "reason": (to == "returned" ? reason : nil) ?? NSNull(), "note": note ?? NSNull()])
@@ -442,8 +509,7 @@ final class FakeAPI: @unchecked Sendable {
       return Stubbed(body: a.bytes)
 
     case ("GET", "/prisoner/prisoner"):
-      let pid = r.query["id"].flatMap(Int.init) ?? 0
-      return .data(["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]])
+      return .data(prisonerJSON(r.query["id"].flatMap(Int.init) ?? 0))
 
     case ("GET", "/prison/prison"):
       return .data(["id": 1, "prisonName": "Test Prison", "routing": "direct", "relay_groups": [["id": 1, "name": "Test Chapter", "accountStatus": "active"], ["id": 2, "name": "Partner Chapter", "accountStatus": "active"], ["id": 3, "name": "Suspended Chapter", "accountStatus": "suspended"]]])
