@@ -130,16 +130,22 @@ extension ChatDTO {
     letter: (MessageDTO) -> Letter = { $0.toDomain() },
     preview: (LastMessageDTO) -> String? = { $0.messageText?.nonBlank }
   ) -> LetterThread {
-    LetterThread(
+    // Oldest first for a conversation view; the API returns them in insertion order already.
+    var letters = (messages ?? []).map(letter).enumerated()
+      .sorted { a, b in (a.element.createdAt ?? .distantPast, a.offset) < (b.element.createdAt ?? .distantPast, b.offset) }
+      .map(\.element)
+    // A conversation's letters come without `resent_as` (only a letter read by itself has it), but the
+    // letters that replaced a returned one are in the same conversation and say so with `resendOf`.
+    for i in letters.indices where letters[i].status == .returned && letters[i].resentAs.isEmpty {
+      letters[i].resentAs = letters.filter { $0.resendOf == letters[i].id }.map { Resend(id: $0.id, status: $0.status, createdAt: $0.createdAt) }
+    }
+    return LetterThread(
       id: id,
       prisonerId: prisoner,
       prisoner: prisonerDetails?.toDomain(),
       lastMessage: lastMessage.map { LastMessage(id: $0.id, fromPrisoner: $0.sender == "prisoner", status: .from(key: $0.status), at: $0.createdAt.instant, preview: preview($0)) },
       lastActivity: lastMessageAt.instant ?? updatedAt.instant,
-      // Oldest first for a conversation view; the API returns them in insertion order already.
-      letters: (messages ?? []).map(letter).enumerated()
-        .sorted { a, b in (a.element.createdAt ?? .distantPast, a.offset) < (b.element.createdAt ?? .distantPast, b.offset) }
-        .map(\.element),
+      letters: letters,
       writer: userDetails.map { ThreadWriter(id: $0.id, name: $0.name?.nonBlank ?? $0.username, managedByGroupId: $0.managedBy, anonymousForGroupId: $0.anonymousForChapter) }
     )
   }

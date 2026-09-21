@@ -125,7 +125,7 @@ public struct Letter: Equatable, Identifiable, Sendable {
   public let keep: Bool
   public let createdAt: Date?
   public let statusChangedAt: Date?
-  public let history: [StatusChange]
+  public var history: [StatusChange]
   public var attachments: [Attachment]
   /// End-to-end mode: true when this device holds no key that opens the letter.
   public var locked: Bool = false
@@ -167,7 +167,7 @@ public struct LetterThread: Equatable, Identifiable, Sendable {
   public let prisoner: Prisoner?
   public let lastMessage: LastMessage?
   public let lastActivity: Date?
-  public let letters: [Letter]
+  public var letters: [Letter]
   /// The account on the writer's side; groups use it to label threads and to know if they may write in them.
   public let writer: ThreadWriter?
 

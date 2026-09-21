@@ -86,7 +86,7 @@ struct DeleteAccountView: View {
       ForEach(whatGoes, id: \.self) { bullet($0) }
 
       SectionTitle("What this does not do")
-      bullet("It does not recall a letter that is already printed or in the post. The prisoner will still receive it. If they write back, there will be no account for a group to record their reply on.")
+      bullet("It does not recall a letter that is already printed or in the mail. The prisoner will still receive it. If they write back, there will be no account for a group to record their reply on.")
       if model.isGroupMember {
         bullet("What you did for your group stays, without your name on it: letters you marked printed or mailed, invitations, changes you proposed to the directory. The letters of writers your group looks after are the group's, and stay.")
       }

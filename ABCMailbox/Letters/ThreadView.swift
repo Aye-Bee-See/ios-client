@@ -121,7 +121,7 @@ struct ThreadView: View {
       ForEach(model.relayQuestion?.options ?? []) { g in Button(g.name) { Task { await model.chooseRelay(g) } } }
       Button("Not now", role: .cancel) {}
     } message: {
-      Text("\(model.relayQuestion?.facility ?? "The new facility") only takes letters through a group. The one you choose prints this letter and posts it.")
+      Text("\(model.relayQuestion?.facility ?? "The new facility") only takes letters through a group. The one you choose prints this letter and mails it.")
     }
   }
 
@@ -280,7 +280,7 @@ struct LetterCard: View {
         Text("They were moved, and this letter is sealed to a group that does not mail to the new facility. Nobody else can open it to pass it on, so it has to be sent again from \(mayChange ? "this phone" : "the writer's device").").font(Theme.bodyMedium).foregroundStyle(Theme.red)
         if mayChange, !letter.locked, !letter.awaitingShare { Button("Send it again", action: onSendAgain).buttonStyle(.link).disabled(busy) }
       case .prisonerFree:
-        Text("They have been released, so this letter is waiting: posted to a prison they have left, it may never reach them. The group prints it only on purpose.\(mayChange ? " You can delete it, or leave it if you know it will be forwarded." : "")").font(Theme.bodyMedium).foregroundStyle(Theme.red)
+        Text("They have been released, so this letter is waiting: mailed to a prison they have left, it may never reach them. The group prints it only on purpose.\(mayChange ? " You can delete it, or leave it if you know it will be forwarded." : "")").font(Theme.bodyMedium).foregroundStyle(Theme.red)
       case .other:
         Text("This letter is being held and will not be printed for now.").font(Theme.bodyMedium).foregroundStyle(Theme.red)
       }

@@ -109,10 +109,10 @@ struct LetterWorkView: View {
       .task { if model.item.value == nil { await model.load() } }
       .quickLookPreview($model.openFile)
       .confirmationDialog("Mark as mailed?", isPresented: $confirmMailed, titleVisibility: .visible) {
-        Button("It is in the post") { Task { await model.advance() } }
+        Button("It is in the mail") { Task { await model.advance() } }
         Button("Not yet", role: .cancel) {}
       } message: {
-        Text("Do this once the letter is actually in the post. The writer will see it as mailed, and it cannot be moved back.")
+        Text("Do this once the letter is actually in the mail. The writer will see it as mailed, and it cannot be moved back.")
       }
       .confirmationDialog("Print it anyway?", isPresented: $confirmRelease, titleVisibility: .visible) {
         Button("Print it anyway") { Task { await model.advance(release: true) } }
@@ -127,7 +127,7 @@ struct LetterWorkView: View {
         ForEach(model.partners) { g in Button(g.name) { Task { await model.share(with: g) } } }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("They will be able to read and print this letter. It stays in your queue: your group still marks it printed and mailed, so agree between you who posts it.")
+        Text("They will be able to read and print this letter. It stays in your queue: your group still marks it printed and mailed, so agree between you who mails it.")
       }
   }
 
@@ -186,7 +186,7 @@ struct LetterWorkView: View {
   /// What a hold means for the person at the printer.
   static func heldText(_ reason: HeldReason) -> String {
     switch reason {
-    case .prisonerFree: return "Held: they have been released since this was written. Posted to a prison they have left, it may never reach them. Print it only if your group knows it will."
+    case .prisonerFree: return "Held: they have been released since this was written. Mailed to a prison they have left, it may never reach them. Print it only if your group knows it will."
     case .chooseRelay: return "Held: they were moved, and the writer has not yet chosen who mails this letter."
     case .resealNeeded: return "Held: they were moved to a facility your group does not mail to. The writer has been asked to send it again, to the group that does."
     case .other: return "Held: something changed for this person after the letter was written. Check their page before printing it."

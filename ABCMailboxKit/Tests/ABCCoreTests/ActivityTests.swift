@@ -103,7 +103,7 @@ final class ActivityTests: XCTestCase {
 
     let sameThread = try XCTUnwrap(ActivitySummary([entry(3, .mailed, chat: 12), entry(2, .printed, chat: 12), entry(1, .mailed, chat: 12)]))
     XCTAssertEqual(sameThread.title, "3 updates about your letters")
-    XCTAssertEqual(sameThread.body, "One of your letters is in the post. One of your letters has been printed.", "each kind of news once")
+    XCTAssertEqual(sameThread.body, "One of your letters is in the mail. One of your letters has been printed.", "each kind of news once")
     XCTAssertEqual(sameThread.chatId, 12)
 
     let many = try XCTUnwrap(ActivitySummary([entry(5, .reply, chat: 12), entry(4, .mailed, chat: 13), entry(3, .printed, chat: 14), entry(2, .queuedForGroup, chat: nil), entry(1, .changeApproved, chat: nil)]))

@@ -37,6 +37,8 @@ final class FakeAPI: @unchecked Sendable {
   var intercept: ((Recorded) -> Stubbed?)?
   /// An API build from before PR #104: `DELETE /auth/user` never reads `password` and deletes one's own account on the token alone.
   var predatesPasswordOnDelete = false
+  /// An API from before PR #106: `held` is not a filter it knows, so it is ignored.
+  var predatesHeldLetters = false
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -352,6 +354,12 @@ final class FakeAPI: @unchecked Sendable {
       let size = Int(r.query["page_size"] ?? "20") ?? 20
       return .data(Array(chats.prefix(size)), extra: ["total": chats.count, "page": 1, "page_size": size])
 
+    case ("GET", "/chat/chat"):
+      // Like the real one: a conversation's letters come with their columns, and without `status_history` or `resent_as`.
+      guard let a = caller(r), let pid = r.query["id"].flatMap(Int.init) else { return .error(401, info: "Sign in.") }
+      let letters = messages.filter { $0["prisoner"] as? Int == pid && $0["user"] as? Int == a.id }.map { m in visible(m, to: a).filter { $0.key != "status_history" && $0.key != "resent_as" } }
+      return .data(["id": pid, "prisoner": pid, "messages": letters])
+
     case ("GET", "/messaging/message"):
       guard let a = caller(r), let m = messages.first(where: { $0["id"] as? Int == r.query["id"].flatMap(Int.init) }) else { return .error(404, info: "No such letter.") }
       return .data(visible(m, to: a))
@@ -373,7 +381,7 @@ final class FakeAPI: @unchecked Sendable {
       let rows = messages.filter { m in
         guard m["relayChapter"] as? Int == r.query["relayChapter"].flatMap(Int.init) else { return false }
         if let status = r.query["status"], m["status"] as? String != status { return false }
-        if let held = r.query["held"], (m["heldReason"] is String) != (held == "true") { return false }
+        if !predatesHeldLetters, let held = r.query["held"], (m["heldReason"] is String) != (held == "true") { return false }
         return true
       }
       return .data(rows.map { visible($0, to: a) }, extra: ["total": rows.count, "page": 1, "page_size": 20])

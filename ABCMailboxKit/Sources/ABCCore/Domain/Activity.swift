@@ -25,8 +25,8 @@ public struct Activity: Equatable, Identifiable, Sendable {
     switch kind {
     case .reply: return "A reply to one of your letters has arrived."
     case .printed: return "One of your letters has been printed."
-    case .mailed: return "One of your letters is in the post."
-    case .returned: return "One of your letters came back in the post."
+    case .mailed: return "One of your letters is in the mail."
+    case .returned: return "One of your letters came back in the mail."
     case .moved(let held): return "Someone you write to was moved to another facility." + Self.waiting(held)
     case .freed(let held): return "Someone you write to has been released." + Self.waiting(held)
     case .queuedForGroup: return "A letter is waiting for your group to print it."

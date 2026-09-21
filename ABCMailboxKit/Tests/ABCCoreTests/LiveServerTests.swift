@@ -270,13 +270,16 @@ final class LiveServerTests: XCTestCase {
     let replaced = try await writer.letters.letter(messageId: first.id)
     XCTAssertEqual(replaced.resentAs.map(\.id), [again.id]); XCTAssertFalse(replaced.canSendAgain)
     let thread = try await writer.letters.thread(chatId: try XCTUnwrap(again.threadId))
-    XCTAssertEqual(thread.letters.first { $0.id == first.id }?.returnReason, .transferred, "a thread's letters carry the reason too")
+    let inThread = try XCTUnwrap(thread.letters.first { $0.id == first.id })
+    XCTAssertEqual(inThread.returnReason, .transferred, "a thread's letters carry the reason")
+    XCTAssertEqual(inThread.returnNote, "Stamped NOT HERE", "and the note, which the conversation does not send and the phone fetches")
+    XCTAssertEqual(inThread.resentAs.map(\.id), [again.id]); XCTAssertFalse(inThread.canSendAgain, "sent again once: the conversation must not offer it twice")
 
     // 2. Freed. The letter just sent again is queued for member1's group; the directory learns they are out.
     try await admin.put("prisoner/prisoner", ["id": 1, "status": "free"])
     news = await writer.activity.sync()
     print("live #106: after the release the writer's feed says: \(news.map(\.sentence))")
-    XCTAssertEqual(news.first?.kind, .freed(held: 1))
+    guard case .freed(let waitingCount)? = news.first?.kind, waitingCount >= 1 else { return XCTFail("expected prisoner.status free with a letter waiting, got \(String(describing: news.first?.kind))") }
     let waiting = try await writer.letters.letter(messageId: again.id)
     XCTAssertEqual(waiting.heldReason, .prisonerFree); XCTAssertTrue(waiting.isHeld); XCTAssertTrue(waiting.canEdit)
     let held = try await member.group.held(groupId: groupId, page: 1, pageSize: 50)
@@ -297,7 +300,8 @@ final class LiveServerTests: XCTestCase {
     print("live #106: the directory edit reports: \((moved["data"] as? [String: Any])?["mail"] ?? moved["mail"] ?? "nothing under mail")")
     news = await writer.activity.sync()
     print("live #106: after the move the writer's feed says: \(news.map(\.sentence))")
-    XCTAssertEqual(news.first?.kind, .moved(held: 1))
+    // At least this letter: the seed is random and may have left the writer another queued letter to the same person.
+    guard case .moved(let held)? = news.first?.kind, held >= 1 else { return XCTFail("expected prisoner.moved with a letter waiting, got \(String(describing: news.first?.kind))") }
     let stuck = try await writer.letters.letter(messageId: direct.id)
     XCTAssertEqual(stuck.heldReason, .chooseRelay)
 

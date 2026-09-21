@@ -43,7 +43,7 @@ final class ReturnedAndHeldTests: XCTestCase {
 
     let news = await writer.container.activity.sync()
     XCTAssertEqual(news.map(\.kind), [.returned, .mailed, .printed])
-    XCTAssertEqual(news.first?.sentence, "One of your letters came back in the post.", "why is inside the app, not on a lock screen")
+    XCTAssertEqual(news.first?.sentence, "One of your letters came back in the mail.", "why is inside the app, not on a lock screen")
 
     let mine = try await writer.container.letters.letter(messageId: letter.id)
     XCTAssertTrue(mine.canSendAgain); XCTAssertFalse(mine.canEdit); XCTAssertTrue(try XCTUnwrap(mine.returnReason).doubtsTheAddress)
@@ -54,6 +54,12 @@ final class ReturnedAndHeldTests: XCTestCase {
     XCTAssertEqual(again.resendOf, letter.id); XCTAssertEqual(again.status, .queued)
     let afterwards = try await writer.container.letters.letter(messageId: letter.id)
     XCTAssertEqual(afterwards.resentAs.map(\.id), [again.id]); XCTAssertFalse(afterwards.canSendAgain)
+
+    // The conversation screen reads the thread, whose letters carry neither the history nor `resent_as`
+    // (seen on the simulator: the note was missing). Both are filled in.
+    let thread = try await writer.container.letters.thread(chatId: 3)
+    let inThread = try XCTUnwrap(thread.letters.first { $0.id == letter.id })
+    XCTAssertEqual(inThread.returnNote, "Stamped NOT HERE"); XCTAssertEqual(inThread.resentAs.map(\.id), [again.id]); XCTAssertFalse(inThread.canSendAgain)
   }
 
   func testOnlyAReturnedLetterOfOnesOwnCanBeSentAgain() async throws {
@@ -92,6 +98,15 @@ final class ReturnedAndHeldTests: XCTestCase {
     let printed = try await group.setStatus(messageId: sent.id, status: .printed, release: true)
     XCTAssertEqual(try XCTUnwrap(member.requests(to: "/messaging/status", method: "PUT").last).json as NSDictionary, ["id": sent.id, "status": "printed", "release": true])
     XCTAssertEqual(printed.status, .printed); XCTAssertNil(printed.heldReason); XCTAssertFalse(printed.isHeld)
+  }
+
+  func testAnAPIFromBeforeHeldLettersAnswersWithEverythingAndNoneOfItIsShownAsHeld() async throws {
+    // Seen on the simulator against a development server one pull request behind: the Held filter listed every letter.
+    fake.predatesHeldLetters = true
+    _ = try await mailed()
+    _ = try await writer.container.letters.send(NewLetter(prisonerId: 3, body: "Queued, and not held", relayNote: nil, relayChapter: 1))
+    let held = try await member.container.group.held(groupId: 1, page: 1, pageSize: 20)
+    XCTAssertEqual(held.items.map(\.id), []); XCTAssertEqual(held.total, 0)
   }
 
   func testAfterAMoveTheWriterChoosesWhoMailsItAndOnlyThatIsSent() async throws {

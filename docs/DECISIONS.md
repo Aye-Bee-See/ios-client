@@ -15,6 +15,9 @@ Short records of choices that are not obvious from the code. Newest first. Decis
 - *The return note's limit and its warning are on the phone.* 200 characters is checked before sending. The sheet says the note is read by the writer and is not encrypted in any mode, because a volunteer used to end-to-end letters would otherwise assume it is.
 - *Codes this version does not know still mean something.* An unknown return reason reads as "nothing says why"; an unknown hold reason is still a hold, shown as one, and still needs the confirmation to print. Reasons may be added after the groups are asked (the PR says so).
 
+- *Only a letter that says it is held is shown as held.* First look at the Held filter on the simulator, against a development server one pull request behind: it listed every letter, because an API that does not know `held=true` ignores it. The page is checked on the phone (`heldReason` present, status queued); against a current API that changes nothing. The same lesson as the delete password: a filter that exists only on the server is a filter only on servers that have it.
+- *A conversation's returned letters are completed on the phone.* `GET /chat/chat?full=true` sends letters without `status_history` and without `resent_as`, so on first look the group's note was missing, and "Send it again" would have been offered a second time. `resentAs` is rebuilt from the sibling letters' `resendOf`; each returned letter is read by itself for its history (returns are rare; a failure only means the note is not shown).
+
 **Not built.** The `addressInDoubt` worklist and the `mail` report on a prisoner edit: the app has no directory editing.
 
 ## 2026-09-20: the phone proves the password before asking for a delete

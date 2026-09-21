@@ -91,7 +91,7 @@ private struct QueueTab: View {
     switch filter ?? .status(.queued) {
     case .status(.queued): return "Nothing is waiting to be printed."
     case .held: return "No letter is held. A letter is held when the person it is for was moved or freed after it was written."
-    case .status(.printed): return "Nothing is printed and waiting for the post."
+    case .status(.printed): return "Nothing is printed and waiting to be mailed."
     case .status(.returned): return "No letter has come back."
     default: return "No mailed letters to show."
     }

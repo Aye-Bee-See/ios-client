@@ -26,7 +26,13 @@ public final class LettersRepository {
   public func thread(chatId: Int) async throws -> LetterThread {
     await codec.ready()
     let envelope: APIEnvelope<ChatDTO> = try await api.get("chat/chat", query: [("id", String(chatId)), ("full", "true")])
-    return decoded(try envelope.required("conversation"))
+    var thread = decoded(try envelope.required("conversation"))
+    // What the group wrote about a returned envelope is in the letter's status history, which a conversation
+    // does not carry. Returns are rare, so each one is read by itself; if that fails the note is simply not shown.
+    for i in thread.letters.indices where thread.letters[i].status == .returned && thread.letters[i].history.isEmpty {
+      if let full = try? await message(thread.letters[i].id) { thread.letters[i].history = full.toDomain().history }
+    }
+    return thread
   }
 
   func message(_ id: Int) async throws -> MessageDTO {

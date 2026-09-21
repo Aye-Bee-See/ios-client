@@ -92,8 +92,15 @@ public final class GroupRepository {
   }
 
   /// Queued letters of this group that are held, whatever the reason.
+  ///
+  /// An API from before PR #106 does not know `held` and answers with every letter the group relays. Only a
+  /// letter that says it is held is one, so the page is checked here; against a current API that changes nothing.
   public func held(groupId: Int, page: Int, pageSize: Int) async throws -> Page<QueueItem> {
-    try await queue(groupId: groupId, query: [("held", "true")], page: page, pageSize: pageSize)
+    let answer = try await queue(groupId: groupId, query: [("held", "true"), ("status", LetterStatus.queued.key)], page: page, pageSize: pageSize)
+    let held = answer.items.filter(\.letter.isHeld)
+    if held.count == answer.items.count { return answer }
+    // The server did not filter, so its total and its further pages mean nothing either.
+    return Page(items: held, total: held.count, page: answer.page, pageSize: answer.pageSize)
   }
 
   private func writerRows() async throws -> [WriterDTO] {
