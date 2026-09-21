@@ -45,7 +45,8 @@ final class LetterWorkModel {
       updated.attachments = current.letter.attachments
       current.letter = updated
       item = .loaded(current)
-      app.show("Recorded as returned. The writer has been told.")
+      // Three of the reasons say the directory may be wrong about where this person is, and a group is who can fix that.
+      app.show("Recorded as returned. The writer has been told." + (reason.doubtsTheAddress ? " If your group knows where they are now, the directory needs correcting." : ""))
       return true
     } catch {
       app.show(AppError.from(error).userMessage ?? "Could not record the return.")
@@ -135,7 +136,7 @@ struct LetterWorkView: View {
     let letter = item.letter, p = item.prisoner
     return Screen {
       HStack(spacing: 8) {
-        Tag(text: letter.status.label)
+        Tag(text: letter.statusLabel)
         if let at = letter.createdAt { Muted("Written \(Format.long(at))") }
       }
       if let reason = letter.heldReason, letter.isHeld { AlertBanner(Self.heldText(reason)) }

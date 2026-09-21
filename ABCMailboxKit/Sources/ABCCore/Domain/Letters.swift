@@ -60,6 +60,19 @@ public enum ReturnReason: String, CaseIterable, Identifiable, Sendable {
     }
   }
 
+  /// What the writer can do about it, said under the reason until the letter has been sent again. One for
+  /// every reason, in the words the Android app uses.
+  public var advice: String {
+    switch self {
+    case .refused: return "Look at the facility's mail rules before sending it again; the group that mailed it may know more."
+    case .ruleViolation: return "Check the rules shown when you write, change what broke them, and send it again."
+    case .transferred: return "Sent again, it goes to wherever the directory now says they are. If the directory still shows the old place, it may come back again: check their profile first."
+    case .released: return "They may have been freed. Check their profile before sending anything to a prison again."
+    case .badAddress: return "The address in the directory may be wrong. Your group can correct it; sent again after that, the letter goes to the new one."
+    case .unknown: return "You can send it again as it is. If it comes back twice, ask the group that mailed it."
+    }
+  }
+
   /// The directory may be wrong about where this person is, so sending the same letter again may fail the same way.
   public var doubtsTheAddress: Bool { self == .transferred || self == .released || self == .badAddress }
 }
@@ -143,6 +156,9 @@ public struct Letter: Equatable, Identifiable, Sendable {
   public var resentAs: [Resend] = []
 
   public var isHeld: Bool { status == .queued && heldReason != nil }
+  /// What the status chip says. A hold replaces "Queued": that word tells a writer a group will print the
+  /// letter, and for a held one that is false, which is the whole point of telling them.
+  public var statusLabel: String { isHeld ? "On hold" : status.label }
   /// What the group wrote when it recorded the return. Never encrypted, in any mode.
   public var returnNote: String? { history.last { $0.to == .returned }?.note }
   /// A returned letter of one's own can be sent again, once.

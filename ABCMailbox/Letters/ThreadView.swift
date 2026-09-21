@@ -216,7 +216,7 @@ struct LetterCard: View {
         Text(letter.fromPrisoner ? "← Received" : "→ Sent").font(Theme.titleMedium).foregroundStyle(letter.fromPrisoner ? Theme.red : Theme.ink)
         if let at = letter.createdAt { Muted(Format.long(at)) }
         Spacer()
-        Tag(text: letter.status.label)
+        Tag(text: letter.statusLabel)
       }
       if letter.awaitingShare {
         // The letter exists and nobody has sealed it to this reader yet. Not an empty letter, and not a lost one.
@@ -261,7 +261,7 @@ struct LetterCard: View {
       if let again = letter.resentAs.last {
         Muted("Sent again\(again.createdAt.map { " on \(Format.long($0))" } ?? ""). That letter is \(again.status.label.lowercased()).")
       } else if mayChange, !letter.fromPrisoner {
-        if letter.returnReason?.doubtsTheAddress == true { Muted("They may not be where the directory says. Check their page before sending it again.") }
+        Muted((letter.returnReason ?? .unknown).advice)
         if !letter.locked, !letter.awaitingShare { Button("Send it again", action: onSendAgain).buttonStyle(.link).disabled(busy) }
       }
     }

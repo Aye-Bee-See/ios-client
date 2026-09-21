@@ -86,6 +86,7 @@ final class ReturnedAndHeldTests: XCTestCase {
     XCTAssertEqual(news.map(\.kind), [.freed(held: 1)])
     XCTAssertEqual(news.first?.sentence, "Someone you write to has been released. A letter you wrote them is waiting for you.")
     let mine = try await writer.container.letters.letter(messageId: sent.id)
+    XCTAssertEqual(mine.statusLabel, "On hold", "not Queued: nobody is going to print it as things stand")
     XCTAssertEqual(mine.heldReason, .prisonerFree); XCTAssertTrue(mine.isHeld); XCTAssertTrue(mine.canEdit, "held is not a status: the letter is still queued, and still the writer's to withdraw")
 
     let group = member.container.group
@@ -97,7 +98,7 @@ final class ReturnedAndHeldTests: XCTestCase {
 
     let printed = try await group.setStatus(messageId: sent.id, status: .printed, release: true)
     XCTAssertEqual(try XCTUnwrap(member.requests(to: "/messaging/status", method: "PUT").last).json as NSDictionary, ["id": sent.id, "status": "printed", "release": true])
-    XCTAssertEqual(printed.status, .printed); XCTAssertNil(printed.heldReason); XCTAssertFalse(printed.isHeld)
+    XCTAssertEqual(printed.status, .printed); XCTAssertNil(printed.heldReason); XCTAssertFalse(printed.isHeld); XCTAssertEqual(printed.statusLabel, "Printed")
   }
 
   func testAnAPIFromBeforeHeldLettersAnswersWithEverythingAndNoneOfItIsShownAsHeld() async throws {
@@ -134,6 +135,7 @@ final class ReturnedAndHeldTests: XCTestCase {
     XCTAssertEqual(LetterStatus.from(key: "returned"), .returned)
     XCTAssertEqual(ReturnReason.from(key: "eaten_by_dog"), .unknown); XCTAssertNil(ReturnReason.from(key: nil)); XCTAssertNil(ReturnReason.from(key: ""))
     XCTAssertEqual(HeldReason.from(key: "quarantined"), .other, "a hold with a new reason is still a hold"); XCTAssertNil(HeldReason.from(key: nil))
+    XCTAssertEqual(Set(ReturnReason.allCases.map(\.advice)).count, 6, "every reason has advice of its own")
     XCTAssertEqual(Set(ReturnReason.allCases.map(\.key)), ["refused", "rule_violation", "transferred", "released", "bad_address", "unknown"])
     XCTAssertEqual(Activity.kind(event: "prisoner.status", status: "deceased"), .other)
 
