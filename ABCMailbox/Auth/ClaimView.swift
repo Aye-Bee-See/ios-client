@@ -78,7 +78,10 @@ final class ClaimModel {
     tokenDead = e.isGone
     switch e {
     case .notFound: error = "That token is not valid. Check it against what your group gave you."
-    case .gone: error = "This token has already been used or has expired. Tokens last 72 hours and work once. Ask the group that set up your account for a new one."
+    // How long a token lasts is the server operator's setting (API PR #113), so no number of days is said anywhere.
+    case .gone(_, condition: "expired"): error = "This token has expired. Ask the group that set up your account for a new one: making one takes them a moment, and they will tell you how long it is good for."
+    case .gone(_, condition: "used"): error = "This token has already been used. If that was you, sign in with the username and password you chose then. If it was not, tell the group that set up your account."
+    case .gone: error = "This token can no longer be used. Ask the group that set up your account for a new one; making one takes them a moment."
     case .network: error = "Can't reach the server. Check your connection and try again."
     default: error = e.userMessage ?? "Something went wrong. Please try again."
     }
@@ -125,7 +128,7 @@ struct ClaimView: View {
 
   @ViewBuilder private func credentials(_ info: ClaimInfo) -> some View {
     Text("Set up your account").font(Theme.headlineSmall)
-    Text("This account (\(info.writerName)) was created for you\(info.groupName.map { " by \($0)" } ?? ""). Choose a username and password to take independent control of your correspondence.\(info.expiresAt.map { " The token expires on \(Format.long($0))." } ?? "")")
+    Text("This account (\(info.writerName)) was created for you\(info.groupName.map { " by \($0)" } ?? ""). Choose a username and password to take independent control of your correspondence.\(info.expiresAt.map { " This token is good until \(Format.long($0))." } ?? "")")
       .font(Theme.bodyLarge)
     AlertBanner(
       app.container.modes.mode == .e2e || info.endToEnd

@@ -74,7 +74,7 @@ struct HandoffView: View {
       ForEach([
         "Once claimed, they no longer appear among your group's writers, and you can no longer write as them.",
         "Your group keeps the letters it relayed, for records and reprints. It loses their other conversations.",
-        "The token works once and lasts 72 hours. Making a new one cancels the old one.",
+        "The token works once. Making a new one cancels the old one.",
       ], id: \.self) { Text("• \($0)").font(Theme.bodyMedium) }
 
       if let token { shown(token) } else {
@@ -92,8 +92,12 @@ struct HandoffView: View {
 
   @ViewBuilder private func shown(_ token: IssuedToken) -> some View {
     SecretCodeDisplay(pretty: SecretCodes.pretty(token.token)).accessibilityIdentifier("token")
+    // The server's date, never a number of days: how long a token lasts is the operator's setting (API PR #113).
     if let expires = token.expiresAt {
-      Muted("Expires \(Format.long(expires)). Shown once: when you leave this screen it cannot be shown again, only replaced.")
+      Text("Good until \(Format.long(expires))").font(Theme.titleMedium).accessibilityIdentifier("goodUntil")
+      Muted("Say that date when you hand it over. After it the token stops working, and a new one is one tap, here. It is shown once: when you leave this screen it cannot be shown again, only replaced.")
+    } else {
+      Muted("Shown once: when you leave this screen it cannot be shown again, only replaced.")
     }
     Button(copied ? "Copied" : "Copy") {
       UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic: SecretCodes.pretty(token.token)]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(600)])

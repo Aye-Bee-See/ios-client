@@ -17,7 +17,9 @@ public enum AppError: Error, Equatable, Sendable {
   /// must tell them apart.
   case conflict(String?, name: String? = nil)
   /// A used or expired claim token (410).
-  case gone(String?)
+  /// `condition` says why, where the server says so: a claim token that is `expired` sends the person to their
+  /// group for a new one; one that is `used` means somebody has the account already, which is a different conversation.
+  case gone(String?, condition: String? = nil)
   /// 429: too many sign-in, claim, or recovery attempts. The seconds come from the `Retry-After` header.
   case rateLimited(String?, retryAfterSeconds: Int?)
   case server(status: Int, info: String?)
@@ -33,7 +35,7 @@ public enum AppError: Error, Equatable, Sendable {
   public var userMessage: String? {
     switch self {
     case .validation(let errors): return errors.joined(separator: " ")
-    case .unauthorized(let info), .notFound(let info), .gone(let info): return info
+    case .unauthorized(let info), .notFound(let info), .gone(let info, _): return info
     case .conflict(let info, _): return info
     case .forbidden(let info): return info
     case .rateLimited(let info, let retryAfter):
@@ -69,6 +71,19 @@ public enum AppError: Error, Equatable, Sendable {
   /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
   public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError") = self { return true } else { return false } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }
+  /// Why something is gone. The API keeps a code for it (`expired`, `used`) but does not put it in the answer yet;
+  /// what arrives is the sentence it builds from the code, "Claim token is expired." So the code is read back out
+  /// of that sentence, and a `condition` field wins the day it is sent. Anything unrecognised is nil: a plain "gone".
+  static func goneCondition(_ condition: String?, error: String?) -> String? {
+    if let condition = condition?.trimmingCharacters(in: .whitespaces), !condition.isEmpty { return condition }
+    guard let error = error?.trimmingCharacters(in: .whitespaces) else { return nil }
+    for subject in ["Claim token", "Invitation"] {
+      for code in ["expired", "used"] where error == "\(subject) is \(code)." { return code }
+    }
+    return nil
+  }
+
+  public var goneBecause: String? { if case .gone(_, let condition) = self { return condition } else { return nil } }
   public var isGone: Bool { if case .gone = self { return true } else { return false } }
   /// No connection, or a reply that is not our API's at all. Only these fall back to the saved directory.
   public var meansNotReachingOurServer: Bool {

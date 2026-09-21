@@ -154,7 +154,7 @@ public final class APIClient: Sendable {
     case 404: return .notFound(envelope?.error ?? info)
     // Lifecycle refusals put the useful sentence in `error` ("A printed letter cannot move to queued"); `info` is generic.
     case 409: return .conflict(envelope?.error ?? info, name: envelope?.name)
-    case 410: return .gone(info)
+    case 410: return .gone(info, condition: AppError.goneCondition(envelope?.condition, error: envelope?.error))
     // An Idempotency-Key reused for a different request (API PR #97). Retrying unchanged would get the
     // same answer, so it is a refusal, not a server fault.
     case 422: return .validation([envelope?.error ?? info ?? "The request was rejected."])

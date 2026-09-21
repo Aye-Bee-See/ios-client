@@ -378,4 +378,28 @@ final class LiveServerTests: XCTestCase {
     let page = try await writer.directory.group(id: groupId)
     XCTAssertEqual(page.lettersSent, numbers.published, "what the public page shows is what the server publishes")
   }
+
+  /// Claim tokens carry the server's date (API PR #113: two weeks by default, and the operator's to change).
+  /// It issues a token, which replaces any the writer had, so it is for a throwaway server like the tests above.
+  func testThrowawayServerAClaimTokenSaysHowLongItIsGoodFor() async throws {
+    let member = try container("ABC_LIVE_THROWAWAY"), newcomer = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test replaces a writer's claim token") }
+    await member.modes.refresh(); await newcomer.modes.refresh()
+    try await member.sessions.login(username: "member1", password: "password1")
+    let writers = try await member.group.writers()
+    let writer = try XCTUnwrap(writers.first, "dev-seed adds a managed writer")
+
+    let issued = try await member.group.issueToken(writerId: writer.id)
+    let until = try XCTUnwrap(issued.expiresAt, "the volunteer's screen says this date")
+    let days = until.timeIntervalSinceNow / 86_400
+    print("live #113: the token is good until \(until), \(String(format: "%.1f", days)) days from now")
+    XCTAssertGreaterThan(days, 3.5, "longer than the 72 hours it used to be")
+
+    // The newcomer's screen asks without being signed in, and is told the same date.
+    let info = try await newcomer.sessions.claimInfo(token: issued.token)
+    XCTAssertEqual(try XCTUnwrap(info.expiresAt).timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 1)
+    let listed = try await member.group.writers()
+    XCTAssertEqual(try XCTUnwrap(listed.first { $0.id == writer.id }?.tokenExpiresAt).timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 1)
+  }
 }

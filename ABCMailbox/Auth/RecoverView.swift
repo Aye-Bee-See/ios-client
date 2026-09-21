@@ -65,7 +65,7 @@ struct RecoverView: View {
       }
 
       SectionTitle("If a support group set up your account and you have not claimed it yet")
-      Text("Ask the group for a new claim token. Tokens last 72 hours and work once; they can make another at any time.").font(Theme.bodyMedium)
+      Text("Ask the group for a new claim token. A token works once, until the date they give you with it; they can make another at any time.").font(Theme.bodyMedium)
       Button("I have a claim token") { app.authPath.append(.claim(token: nil)) }.buttonStyle(.primaryCompact)
       Muted("Too many wrong sign-in attempts lock a username for 15 minutes. Waiting is sometimes all it takes.")
     }

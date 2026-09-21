@@ -263,7 +263,7 @@ private struct WritersTab: View {
     VStack(alignment: .leading, spacing: 2) {
       Text(w.name).font(Theme.titleMedium)
       if let note = w.note { Muted(note) }
-      Text(w.hasLiveToken ? "Claim token pending, expires \(w.tokenExpiresAt.map(Format.short) ?? "")" : "Unclaimed, no token")
+      Text(w.hasLiveToken ? "Claim token pending, good until \(w.tokenExpiresAt.map(Format.short) ?? "")" : "Unclaimed, no token")
         .font(Theme.label).foregroundStyle(w.hasLiveToken ? Theme.red : Theme.inkMuted)
       HStack(spacing: 20) {
         Button("New letter") { app.push(.pickPrisoner(writerId: w.id, writerName: w.name)) }.buttonStyle(.link)

@@ -10,13 +10,15 @@ struct APIEnvelope<T: Decodable>: Decodable {
   let name: String?
   let errors: [String]?
   let error: String?
+  /// On some refusals: a code for why (a claim token that is `expired` or `used`). Asked of the API; not sent yet, see `AppError.goneCondition`.
+  let condition: String?
   let total: Int?
   let page: Int?
   let pageSize: Int?
   /// Only on the notification feed: how many entries the account has not read.
   let unread: Int?
 
-  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, total, page, unread, pageSize = "page_size" }
+  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, condition, total, page, unread, pageSize = "page_size" }
 
   /// The payload, or an error a screen can show when the server sent none.
   func required(_ what: String = "response") throws -> T {

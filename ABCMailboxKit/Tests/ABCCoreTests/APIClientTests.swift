@@ -38,6 +38,21 @@ final class APIClientTests: XCTestCase {
     XCTAssertEqual(gone, .gone("This claim token has expired."))
   }
 
+  func testWhyAClaimTokenIsGoneIsReadFromTheFieldOrFailingThatFromTheServersSentence() async {
+    // What the API sends today: the code only inside the sentence it builds from it.
+    let expired = await failure(410, #"{"success":false,"name":"ClaimTokenError","info":"This claim token is not valid.","status":410,"error":"Claim token is expired."}"#)
+    XCTAssertEqual(expired?.goneBecause, "expired"); XCTAssertEqual(expired?.isGone, true)
+    let used = await failure(410, #"{"name":"ClaimTokenError","info":"This claim token is not valid.","error":"Claim token is used."}"#)
+    XCTAssertEqual(used?.goneBecause, "used")
+    // The day the field is sent, it wins over the sentence.
+    let field = await failure(410, #"{"info":"Gone.","condition":"expired","error":"Claim token is used."}"#)
+    XCTAssertEqual(field?.goneBecause, "expired")
+    // Anything else is a plain "gone": no guessing from words that only look alike.
+    let other = await failure(410, #"{"info":"This account can no longer be claimed.","error":"This letter was deleted and is used no more."}"#)
+    XCTAssertNil(other?.goneBecause); XCTAssertEqual(other?.isGone, true)
+    XCTAssertNil(AppError.goneCondition("  ", error: nil))
+  }
+
   func testALifecycle409ShowsTheSpecificSentenceFromErrorNotTheGenericInfo() async {
     let e = await failure(409, #"{"success":false,"name":"LetterStatusError","info":"Error updating letter status.","status":409,"error":"A printed letter cannot move to queued."}"#)
     XCTAssertEqual(e?.userMessage, "A printed letter cannot move to queued.")

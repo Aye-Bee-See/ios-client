@@ -2,6 +2,14 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-21: a claim token's lifetime is a date from the server, and why it is gone is read from a sentence
+
+**Context.** API PR #113 made the lifetime the operator's setting (14 days by default). The app had "72 hours" in three sentences. The API's note says an expired token is "a 410 with the expired condition", but the answer carries no `condition` field: the code exists on the server's error object and only the sentence built from it, "Claim token is expired.", is sent. Android found this first.
+
+**Decision.** No number of days anywhere; both screens show the server's `expiresAt`. `AppError.gone` carries a condition, taken from a `condition` field if there is one and otherwise from the exact sentences "Claim token is expired." / "… is used." (and the same for "Invitation"). Anything else is a plain "gone" with the neutral wording.
+
+**Why.** Expired and used are different conversations: one is "ask for another", the other may be "somebody has your account". Matching whole sentences, not words, keeps a reworded or unrelated 410 from being misread; preferring the field means the app improves by itself when the API sends it. Worth asking the API side to send `condition` in the body.
+
 ## 2026-09-21: several letters at once are all or none on the phone too
 
 **Context.** API PR #111: `PUT /messaging/status/batch` moves up to 200 letters, all or none, and tells each writer once.
