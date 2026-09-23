@@ -163,6 +163,8 @@ public struct Letter: Equatable, Identifiable, Sendable {
   /// API PR #117; from the history row before that.
   public var returnNote: String? { returnNoteOnLetter ?? history.last { $0.to == .returned }?.note }
   var returnNoteOnLetter: String? = nil
+  /// The API said what the note is (API PR #117), even if that is "none". False for an older API, which says nothing.
+  var returnNoteKnown = false
   /// A returned letter of one's own can be sent again, once.
   public var canSendAgain: Bool { !fromPrisoner && status == .returned && resentAs.isEmpty }
 

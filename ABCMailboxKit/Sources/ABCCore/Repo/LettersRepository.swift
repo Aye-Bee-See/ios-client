@@ -30,7 +30,7 @@ public final class LettersRepository {
     // What the group wrote about a returned envelope is on the letter since API PR #117 (`returnNote`). Against
     // an older API it is only in the letter's status history, which a conversation does not carry; returns are
     // rare, so such a letter is read by itself, and if that fails the note is simply not shown.
-    for i in thread.letters.indices where thread.letters[i].status == .returned && thread.letters[i].returnNote == nil && thread.letters[i].history.isEmpty {
+    for i in thread.letters.indices where thread.letters[i].status == .returned && !thread.letters[i].returnNoteKnown && thread.letters[i].history.isEmpty {
       if let full = try? await message(thread.letters[i].id) { thread.letters[i].history = full.toDomain().history }
     }
     return thread

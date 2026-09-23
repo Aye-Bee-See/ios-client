@@ -561,7 +561,12 @@ final class FakeAPI: @unchecked Sendable {
       }
       if to == "mailed", let g = messages[i]["relayChapter"] as? Int { lettersCounted[g, default: 0] += 1 }
       messages[i]["status"] = to; messages[i]["heldReason"] = nil; messages[i]["returnReason"] = to == "returned" ? reason : nil
-      messages[i]["returnNote"] = to == "returned" ? (note?.trimmingCharacters(in: .whitespaces).isEmpty == false ? note : nil) : nil
+      // As the API: on a returned letter the key is always there, null when no note was given.
+      if to == "returned" {
+        if let words = note?.trimmingCharacters(in: .whitespaces), !words.isEmpty { messages[i]["returnNote"] = words } else { messages[i]["returnNote"] = NSNull() }
+      } else {
+        messages[i]["returnNote"] = nil
+      }
       var history = messages[i]["status_history"] as? [[String: Any]] ?? []
       history.append(["fromStatus": from, "toStatus": to, "changedBy": a.id, "createdAt": "2026-09-20T10:00:00.000Z", "reason": (to == "returned" ? reason : nil) ?? NSNull(), "note": note ?? NSNull()])
       messages[i]["status_history"] = history

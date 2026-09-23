@@ -62,9 +62,18 @@ final class ReturnedAndHeldTests: XCTestCase {
     let inThread = try XCTUnwrap(thread.letters.first { $0.id == letter.id })
     XCTAssertEqual(inThread.returnNote, "Stamped NOT HERE"); XCTAssertEqual(inThread.resentAs.map(\.id), [again.id]); XCTAssertFalse(inThread.canSendAgain)
     XCTAssertEqual(writer.requests(to: "/messaging/message", method: "GET").count, reads, "the note came with the conversation")
-    // An older API sends no returnNote: then, and only then, the letter is read by itself.
+    // Three states on the API: absent (an older API), null (no note given), a string. Only the first calls for a read.
     let old = try JSONDecoder().decode(MessageDTO.self, from: Data(#"{"id":41,"sender":"user","prisoner":3,"status":"returned","returnReason":"refused"}"#.utf8)).toDomain()
-    XCTAssertNil(old.returnNote)
+    XCTAssertNil(old.returnNote); XCTAssertFalse(old.returnNoteKnown)
+    let none = try JSONDecoder().decode(MessageDTO.self, from: Data(#"{"id":41,"sender":"user","prisoner":3,"status":"returned","returnReason":"refused","returnNote":null}"#.utf8)).toDomain()
+    XCTAssertNil(none.returnNote); XCTAssertTrue(none.returnNoteKnown, "the API said: no note")
+    // A returned letter with no note, on a current API: the conversation is read once, nothing more.
+    let quiet = try await mailed("Returned without a note")
+    _ = try await member.container.group.markReturned(messageId: quiet.id, reason: .unknown, note: nil)
+    let readsBefore = writer.requests(to: "/messaging/message", method: "GET").count
+    let threadAgain = try await writer.container.letters.thread(chatId: 3)
+    XCTAssertNil(try XCTUnwrap(threadAgain.letters.first { $0.id == quiet.id }).returnNote)
+    XCTAssertEqual(writer.requests(to: "/messaging/message", method: "GET").count, readsBefore, "no history read for a null note")
   }
 
   func testOnlyAReturnedLetterOfOnesOwnCanBeSentAgain() async throws {
