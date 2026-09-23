@@ -57,6 +57,10 @@ final class FakeAPI: @unchecked Sendable {
   var requireSplitAuth = false
   /// How many times the handshake was asked, per username (a test can check nothing else was tried).
   var handshakes: [String: Int] = [:]
+  /// Group roles (API PR #115): the chapter's group-owner admin, by group id. The first group admin to set up the key becomes it.
+  var owners: [Int: Int] = [:]
+  /// An API from before PR #115: no `owner` or `waiting` in the members list, no ownership endpoint, any holder may hand the key.
+  var predatesGroupRoles = false
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -150,6 +154,15 @@ final class FakeAPI: @unchecked Sendable {
     return nil
   }
 
+  /// An optional id as JSON: the number, or null.
+  private func orNull(_ id: Int?) -> Any { id.map { $0 as Any } ?? NSNull() }
+  private static let ownerOnly = "Only the group-owner admin of this chapter can hand its key to a group admin, take it away, or rotate it."
+  private func admins(of g: Int) -> [Account] { accounts.filter { $0.role == "chapter" && $0.chapterId == g } }
+  /// Every group admin of the chapter but the actor is told (API PR #115).
+  private func tellAdmins(of g: Int, except actor: Int, _ event: String, detail: [String: Any]) {
+    for a in admins(of: g) where a.id != actor { tellLocked(a.id, event, chat: nil, message: nil, detail: detail) }
+  }
+
   private func prisonerJSON(_ pid: Int) -> [String: Any] {
     ["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]]
   }
@@ -167,7 +180,8 @@ final class FakeAPI: @unchecked Sendable {
     for k in ["publicKey", "wrappedPrivateKey", "kdfSalt", "kdfParams"] { b[k] = a.keys[k] ?? NSNull() }
     b["hasRecovery"] = a.keys["recoveryWrappedPrivateKey"] != nil
     if let g = a.chapterId, a.role == "chapter" {
-      b["orgKey"] = ["chapterId": g, "chapterPublicKey": groupKeys[g]?.publicKey ?? NSNull(), "wrappedOrgPrivateKey": memberKeys[g]?[a.id] ?? NSNull(), "keyVersion": groupKeys[g]?.version ?? NSNull()]
+      b["orgKey"] = ["chapterId": g, "chapterPublicKey": groupKeys[g]?.publicKey ?? NSNull(), "wrappedOrgPrivateKey": memberKeys[g]?[a.id] ?? NSNull(), "keyVersion": groupKeys[g]?.version ?? NSNull(),
+                     "owner": predatesGroupRoles ? NSNull() : orNull(owners[g]), "isOwner": !predatesGroupRoles && owners[g] == a.id]
     }
     return b
   }
@@ -262,9 +276,13 @@ final class FakeAPI: @unchecked Sendable {
       guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
       guard target == a.id else { return .error(403, info: "Not yours to delete.") }
       guard predatesPasswordOnDelete || body["password"] as? String == a.password else { return .error(403, info: "Incorrect password.") }
-      if a.anonymousFor != nil { return .error(409, info: "A group's shared anonymous account cannot be deleted.", extra: ["name": "AccountDeleteError"]) }
+      if a.anonymousFor != nil { return .error(409, info: "A group's shared anonymous account cannot be deleted.", extra: ["name": "AccountDeleteError", "condition": "anonymous"]) }
+      // API PR #115: a group-owner admin cannot leave while the chapter has other group admins. PR #117: a condition names why.
+      if !predatesGroupRoles, let g = a.chapterId, owners[g] == a.id, admins(of: g).count > 1 {
+        return .error(409, info: "Error deleting user.", extra: ["name": "AccountDeleteError", "condition": "group_owner", "error": "A group-owner admin cannot delete their account while the chapter has other group admins: hand ownership on first."])
+      }
       if mode == "e2e", let g = a.chapterId, memberKeys[g]?[a.id] != nil, (memberKeys[g] ?? [:]).count == 1 {
-        return .error(409, info: "Error deleting user.", extra: ["name": "AccountDeleteError", "error": "You are the last holder of your group's key. Hand it to another member first, or the group could never read its letters again."])
+        return .error(409, info: "Error deleting user.", extra: ["name": "AccountDeleteError", "condition": "last_key_holder", "error": "You are the last holder of your group's key. Hand it to another member first, or the group could never read its letters again."])
       }
       let theirs = messages.filter { $0["user"] as? Int == target }
       let ids = Set(theirs.compactMap { $0["id"] as? Int })
@@ -347,27 +365,53 @@ final class FakeAPI: @unchecked Sendable {
     case ("PUT", "/auth/chapter-keys"):
       guard let a = caller(r), let g = body["chapter"] as? Int else { return .error(401, info: "Sign in.") }
       if groupKeys[g] != nil { return .error(409, info: "This group already has a key.") }
+      if a.role == "admin" { return .error(403, info: "A superadmin cannot create a chapter's key: whoever makes a key knows it.") }
       groupKeys[g] = (body["publicKey"] as! String, 1)
       memberKeys[g, default: [:]][a.id] = body["wrappedOrgPrivateKey"] as? String
+      if !predatesGroupRoles {
+        tellAdmins(of: g, except: a.id, "group.key", detail: ["action": "set"])
+        if owners[g] == nil { owners[g] = a.id; tellAdmins(of: g, except: a.id, "group.owner", detail: ["owner": a.id, "previous": NSNull(), "by": "first key"]) }
+      }
       return .data([:])
 
     case ("GET", "/auth/member-keys"):
       let g = r.query["chapter"].flatMap(Int.init) ?? 0
       if inactiveGroups.contains(g) { return .error(403, info: "Your group is not active.") }
-      return .data(["chapter": g, "members": accounts.filter { $0.role == "chapter" && $0.chapterId == g }.map { m -> [String: Any] in
+      var answer: [String: Any] = ["chapter": g, "members": admins(of: g).map { m -> [String: Any] in
         ["id": m.id, "username": m.username, "name": m.name ?? NSNull(), "publicKey": m.keys["publicKey"] ?? NSNull(), "holdsGroupKey": memberKeys[g]?[m.id] != nil]
-      }])
+      }]
+      if !predatesGroupRoles {
+        answer["owner"] = orNull(owners[g])
+        answer["waiting"] = admins(of: g).filter { $0.keys["publicKey"] != nil && memberKeys[g]?[$0.id] == nil }.map(\.id)
+      }
+      return .data(answer)
+
+    case ("PUT", "/auth/chapter-owner"):
+      if predatesGroupRoles { return .error(404, info: "Cannot PUT /auth/chapter-owner") }
+      guard let a = caller(r), let g = body["chapter"] as? Int, let target = body["user"] as? Int else { return .error(401, info: "Sign in.") }
+      guard a.role == "admin" || owners[g] == a.id else { return .error(403, info: "Only the group-owner admin, or a superadmin, can move ownership.") }
+      guard admins(of: g).contains(where: { $0.id == target }) else { return .error(400, extra: ["errors": ["user must be a group admin of this chapter."]]) }
+      let previous = owners[g]
+      owners[g] = target
+      for admin in admins(of: g) { tellLocked(admin.id, "group.owner", chat: nil, message: nil, detail: ["owner": target, "previous": orNull(previous), "by": a.role == "admin" ? "superadmin" : "owner"]) }
+      return .data(["chapter": g, "owner": target, "previous": orNull(previous), "holdsGroupKey": memberKeys[g]?[target] != nil])
 
     case ("PUT", "/auth/member-key"):
       if inactiveGroups.contains(body["chapter"] as? Int ?? 0) { return .error(403, info: "Your group is not active.") }
+      if !predatesGroupRoles, let a = caller(r), let g = body["chapter"] as? Int, owners[g] != a.id { return .error(403, info: Self.ownerOnly) }
       if let sealedFor = body["keyVersion"] as? Int, sealedFor != groupKeys[body["chapter"] as? Int ?? 0]?.version {
         return .error(409, info: "Error saving.", extra: ["name": "KeyVersionError", "error": "That group rotated its key."])
       }
       memberKeys[body["chapter"] as! Int, default: [:]][body["user"] as! Int] = body["wrappedOrgPrivateKey"] as? String
+      if !predatesGroupRoles, let a = caller(r) { tellAdmins(of: body["chapter"] as! Int, except: a.id, "group.key", detail: ["action": "handed", "member": body["user"] as! Int]) }
       return .data([:])
 
     case ("DELETE", "/auth/member-key"):
-      memberKeys[body["chapter"] as! Int]?[body["user"] as! Int] = nil
+      let g = body["chapter"] as! Int, target = body["user"] as! Int
+      if !predatesGroupRoles, let a = caller(r), owners[g] != a.id { return .error(403, info: Self.ownerOnly) }
+      if (memberKeys[g] ?? [:]).count <= 1 { return .error(409, info: "The last holder cannot be removed; rotate the key instead.") }
+      memberKeys[g]?[target] = nil
+      if !predatesGroupRoles, let a = caller(r) { tellAdmins(of: g, except: a.id, "group.key", detail: ["action": "removed", "member": target]) }
       return .data([:])
 
     case ("GET", "/auth/notifications"):

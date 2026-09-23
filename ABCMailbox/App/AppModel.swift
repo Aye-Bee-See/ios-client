@@ -154,6 +154,8 @@ final class AppModel {
   /// The app is open: fetch the news and say it here, as a toast. Looking at the Inbox counts as reading it.
   func syncActivity() async {
     let fresh = await container.activity.sync()
+    // A copy of the group key handed or withdrawn, or the owner changed: the loaded key follows without a sign-out.
+    if fresh.contains(where: \.kind.concernsGroupKey) { await container.group.refreshKeyState() }
     if let summary = ActivitySummary(fresh) { show(fresh.count == 1 ? summary.body : "\(summary.title). \(summary.body)") }
     if tab == .inbox, inboxPath.isEmpty { await container.activity.markAllRead() }
   }

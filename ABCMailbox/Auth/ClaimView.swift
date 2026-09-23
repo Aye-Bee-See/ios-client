@@ -133,7 +133,7 @@ struct ClaimView: View {
     AlertBanner(
       app.container.modes.mode == .e2e || info.endToEnd
         ? "Your password protects your encryption key. No one, not this site and not your group, can read your letters without it. After this step you will get a recovery code: it is the only way back in if you forget the password."
-        : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a network admin has to help you."
+        : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
 
     LabeledField(label: "Username", hint: "3 to 16 characters") {

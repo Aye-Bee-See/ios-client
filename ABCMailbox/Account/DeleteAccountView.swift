@@ -27,7 +27,7 @@ final class DeleteAccountModel {
   /// demands, is the guard against a borrowed phone. Case and stray spaces are forgiven: this proves
   /// intent, not identity.
   var usernameMatches: Bool { typedUsername.trimmingCharacters(in: .whitespaces).lowercased() == username.lowercased() }
-  var blockedByGroupKey: Bool { preview?.isLastKeyHolder == true }
+  var blockedByGroupKey: Bool { preview?.isLastKeyHolder == true || preview?.isOwnerWithOtherAdmins == true }
   var canDelete: Bool { !busy && usernameMatches && !password.isEmpty && understood && !blockedByGroupKey }
 
   func edited() { error = nil }
@@ -80,7 +80,7 @@ struct DeleteAccountView: View {
 
   var body: some View {
     Screen(spacing: 14, horizontal: 24) {
-      AlertBanner("This cannot be undone. Nobody, not your group and not a network admin, can bring any of it back.")
+      AlertBanner("This cannot be undone. Nobody, not your group and not a superadmin, can bring any of it back.")
 
       SectionTitle("What will be deleted")
       ForEach(whatGoes, id: \.self) { bullet($0) }
@@ -91,7 +91,7 @@ struct DeleteAccountView: View {
         bullet("What you did for your group stays, without your name on it: letters you marked printed or mailed, invitations, changes you proposed to the directory. The letters of writers your group looks after are the group's, and stay.")
       }
 
-      if let p = model.preview, p.isLastKeyHolder { lastKeyHolderNotice(p) } else { form }
+      if let p = model.preview, p.isOwnerWithOtherAdmins { ownerNotice } else if let p = model.preview, p.isLastKeyHolder { lastKeyHolderNotice(p) } else { form }
     }
     .disabled(model.busy)
     .navigationTitle("Delete my account")
@@ -134,11 +134,18 @@ struct DeleteAccountView: View {
     .accessibilityElement(children: .combine)
   }
 
+  /// API PR #115: a group-owner admin cannot leave while the group has other group admins; the server would refuse.
+  @ViewBuilder private var ownerNotice: some View {
+    SectionTitle("Not yet")
+    AlertBanner("You are the group-owner admin and your group has other group admins. Make one of them the owner first, or the server will refuse.")
+    Button("Open the Group key screen") { app.push(.groupKey) }.buttonStyle(.primary)
+  }
+
   @ViewBuilder private func lastKeyHolderNotice(_ p: AccountDeletionPreview) -> some View {
     SectionTitle("Not yet")
-    AlertBanner("You are the only member who holds your group's key. If this account went now, nobody could ever read the group's letters again, so the server will refuse. Hand the key to another member first.")
+    AlertBanner("You are the only group admin who holds your group's key. If this account went now, nobody could ever read the group's letters again, so the server will refuse. Hand the key to another group admin first.")
     if p.membersWhoCouldHoldTheKey.isEmpty {
-      Muted("No other member has signed in yet, so there is nobody to hand it to. Invite or wait for a second member, then come back.")
+      Muted("No other group admin has signed in yet, so there is nobody to hand it to. Invite or wait for a second group admin, then come back.")
     } else {
       Muted("\(p.membersWhoCouldHoldTheKey.formatted(.list(type: .or))) could be handed it now.")
     }

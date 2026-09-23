@@ -220,7 +220,7 @@ struct LetterCard: View {
       }
       if letter.awaitingShare {
         // The letter exists and nobody has sealed it to this reader yet. Not an empty letter, and not a lost one.
-        Muted("✉ Your group recorded this letter before your account had its encryption key, so it is not yours to open yet. It opens by itself the next time a member of the group signs in.")
+        Muted("✉ Your group recorded this letter before your account had its encryption key, so it is not yours to open yet. It opens by itself the next time a group admin of the group signs in.")
       } else if letter.locked {
         Muted("🔒 This letter is encrypted and this device does not hold a key that opens it.")
       } else if !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

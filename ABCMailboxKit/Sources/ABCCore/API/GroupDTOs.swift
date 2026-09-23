@@ -87,6 +87,22 @@ struct AddEnvelopeRequest: Encodable {
 
 struct MemberKeysDTO: Decodable {
   let members: [MemberDTO]?
+  /// API PR #115: the chapter's group-owner admin, and the group admins with keys of their own who are still to be handed the chapter's.
+  let owner: Int?
+  let waiting: [Int]?
+}
+
+/// `PUT /auth/chapter-owner`: make another group admin of the chapter its group-owner admin (API PR #115).
+struct OwnerRequest: Encodable {
+  let chapter: Int
+  let user: Int
+}
+
+struct OwnerDTO: Decodable {
+  let chapter: Int?
+  let owner: Int?
+  let previous: Int?
+  let holdsGroupKey: Bool?
 }
 
 struct MemberDTO: Decodable {

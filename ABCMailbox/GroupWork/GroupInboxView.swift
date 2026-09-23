@@ -78,7 +78,7 @@ private struct QueueTab: View {
   var body: some View {
     if groupId == nil {
       // The API would answer 403 and explain, but there is nothing to ask for.
-      Text("This account is not in a group yet. A network admin has to set your group before you can see its letters.").font(Theme.bodyLarge).padding(20)
+      Text("This account is not in a group yet. A superadmin has to set your group before you can see its letters.").font(Theme.bodyLarge).padding(20)
     } else {
       PagedList(loader: loader, emptyText: emptyText) {
         ChipRow(options: queueFilters, selected: $filter, showAll: false).padding(.horizontal, 20).padding(.vertical, 8).disabled(selecting)
@@ -287,13 +287,13 @@ private struct MembersWaitingNotice: View {
       let names = waiting.map(\.name).formatted(.list(type: .and))
       VStack(alignment: .leading, spacing: 8) {
         Text(waiting.count == 1 ? "\(names) is waiting for the group key" : "\(names) are waiting for the group key").font(Theme.titleMedium)
-        Text("Handing it over lets them read and print the group's letters once letters are encrypted. Only do this for people who are really in your group.").font(Theme.bodyMedium)
+        Text("Handing it over lets them read and print every letter the group mails, once letters are encrypted. Only the group-owner admin can, and only for people the group trusts with that.").font(Theme.bodyMedium)
         HStack(spacing: 20) {
           Button(busy ? "Sealing…" : "Hand it over") {
             Task { busy = true; await app.handKeyToWaitingMembers(); busy = false }
           }
           .buttonStyle(.primaryCompact).disabled(busy)
-          Button("Members") { app.push(.groupKey) }.buttonStyle(.link)
+          Button("Group key") { app.push(.groupKey) }.buttonStyle(.link)
         }
       }
       .padding(16).frame(maxWidth: .infinity, alignment: .leading)

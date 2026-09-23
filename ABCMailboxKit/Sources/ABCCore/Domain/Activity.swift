@@ -12,6 +12,19 @@ public struct Activity: Equatable, Identifiable, Sendable {
     /// queued letters to them are waiting for the writer now.
     case moved(held: Int)
     case freed(held: Int)
+    /// Group roles (API PR #115): the key set up, handed or withdrawn (to or from this account, or another's), rotated;
+    /// the owner changed (to this account, or another); a group admin waiting for the key.
+    case groupKeySet
+    case groupKeyHanded(toMe: Bool)
+    case groupKeyRemoved(fromMe: Bool)
+    case groupKeyRotated
+    case groupOwner(me: Bool)
+    case groupWaiting
+
+    /// The loaded group key may have changed hands or owners: the phone reloads it, so a copy handed or withdrawn takes effect without a sign-out.
+    public var concernsGroupKey: Bool {
+      switch self { case .groupKeySet, .groupKeyHanded, .groupKeyRemoved, .groupKeyRotated, .groupOwner: return true; default: return false }
+    }
     /// An event this version has never heard of still deserves a word: the app will show whatever it is.
     case other
   }
@@ -40,6 +53,15 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case .returned: return "One of your letters came back in the mail."
     case .moved(let held): return "Someone you write to was moved to another facility." + Self.waiting(held)
     case .freed(let held): return "Someone you write to has been released." + Self.waiting(held)
+    case .groupKeySet: return "Your group now has an encryption key."
+    case .groupKeyHanded(true): return "You have been handed the group key. Letters will open from your next refresh."
+    case .groupKeyHanded(false): return "The group key was handed to another group admin."
+    case .groupKeyRemoved(true): return "Your copy of the group key has been withdrawn."
+    case .groupKeyRemoved(false): return "A group admin's copy of the group key was withdrawn."
+    case .groupKeyRotated: return "Your group's key was replaced. Anyone left out of the new key can no longer open its letters."
+    case .groupOwner(true): return "You are now your group's group-owner admin."
+    case .groupOwner(false): return "Your group has a new group-owner admin."
+    case .groupWaiting: return "A group admin is waiting to be handed the group key."
     case .queuedForGroup: return "A letter is waiting for your group to print it."
     case .changeApproved: return "A change you proposed to the directory was approved."
     case .changeRejected: return "A change you proposed to the directory was not accepted."
@@ -55,8 +77,19 @@ public struct Activity: Equatable, Identifiable, Sendable {
     }
   }
 
-  static func kind(event: String, status: String?, held: Int = 0) -> Kind {
+  /// `me` is the signed-in account, so that a key handed to it, or the role given to it, reads as "you".
+  static func kind(event: String, status: String?, held: Int = 0, action: String? = nil, member: Int? = nil, owner: Int? = nil, me: Int? = nil) -> Kind {
     switch (event, status) {
+    case ("group.key", _):
+      switch action {
+      case "set": return .groupKeySet
+      case "handed": return .groupKeyHanded(toMe: me != nil && member == me)
+      case "removed": return .groupKeyRemoved(fromMe: me != nil && member == me)
+      case "rotated": return .groupKeyRotated
+      default: return .other
+      }
+    case ("group.owner", _): return .groupOwner(me: me != nil && owner == me)
+    case ("group.waiting", _): return .groupWaiting
     case ("letter.reply", _): return .reply
     case ("letter.status", "printed"): return .printed
     case ("letter.status", "mailed"): return .mailed

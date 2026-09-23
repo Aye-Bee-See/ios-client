@@ -69,6 +69,9 @@ struct OrgKeyDTO: Decodable {
   let chapterPublicKey: String?
   let wrappedOrgPrivateKey: String?
   let keyVersion: Int?
+  /// API PR #115: who owns the chapter's key, and whether that is the caller.
+  let owner: Int?
+  let isOwner: Bool?
 }
 
 struct NamedRef: Decodable {
