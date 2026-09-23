@@ -154,8 +154,6 @@ final class AppModel {
   /// The app is open: fetch the news and say it here, as a toast. Looking at the Inbox counts as reading it.
   func syncActivity() async {
     let fresh = await container.activity.sync()
-    // A copy of the group key handed or withdrawn, or the owner changed: the loaded key follows without a sign-out.
-    if fresh.contains(where: \.kind.concernsGroupKey) { await container.group.refreshKeyState() }
     if let summary = ActivitySummary(fresh) { show(fresh.count == 1 ? summary.body : "\(summary.title). \(summary.body)") }
     if tab == .inbox, inboxPath.isEmpty { await container.activity.markAllRead() }
   }
@@ -182,6 +180,12 @@ final class AppModel {
     if done.writersGivenKeys > 0 { said.append(done.writersGivenKeys == 1 ? "A writer in your care was given keys." : "\(done.writersGivenKeys) writers in your care were given keys.") }
     if done.lettersShared > 0 { said.append(done.lettersShared == 1 ? "A reply was shared with its writer." : "\(done.lettersShared) replies were shared with their writers.") }
     if !said.isEmpty { show(said.joined(separator: " ")) }
+  }
+
+  /// After the key page hands the key, stops, or passes the role on: what the Inbox says is waiting follows.
+  func refreshMembersWaiting() async {
+    guard user?.role == Role.chapter, let roster = try? await container.group.roster(), roster.iAmOwner else { membersWaiting = []; return }
+    membersWaiting = roster.members.filter { $0.hasOwnKey && !$0.holdsGroupKey && !$0.isMe }
   }
 
   /// One confirmation, as the API's guide allows, rather than silently: it grants someone the means to

@@ -228,7 +228,7 @@ final class LetterCodec {
     case .locked: throw AppError.lettersLocked
     case .notSetUp: throw AppError.forbidden("Your group has not set up its encryption key yet. Open the Inbox and choose \"Set up the group key\".")
     case .groupNotActive: throw AppError.forbidden(GroupKeyState.groupNotActiveText)
-    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Only the group-owner admin can hand it to you, from their Inbox.")
+    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask the group admin in charge of it to hand it to you, from their Inbox, Group key.")
     case .notNeeded: throw AppError.forbidden("This account is not a group admin of any group.")
     }
   }

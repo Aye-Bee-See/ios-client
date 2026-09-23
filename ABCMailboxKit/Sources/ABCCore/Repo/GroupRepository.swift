@@ -31,7 +31,7 @@ public final class GroupRepository {
   private func groupKey(force: Bool = false) async throws -> GroupKey {
     switch await keyring.load(force: force, anyMode: true) {
     case .notSetUp: throw AppError.forbidden("Your group has not set up its encryption key yet. Do that first, from the Inbox.")
-    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Only the group-owner admin can hand it to you, from their Inbox.")
+    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask the group admin in charge of it to hand it to you, from their Inbox, Group key.")
     case let state: return try LetterCodec.key(from: state)
     }
   }

@@ -37,7 +37,7 @@ struct GroupKeyBanner: View {
       case .notHeld:
         notice(
           "You have not been given the group key yet",
-          "Until the group-owner admin hands the key to you, letters sent to your group stay locked on this phone. Ask them to open Inbox, Group key, and choose your name."
+          "Until the group admin in charge of the key hands it to you, letters sent to your group stay locked on this phone. Ask them to open Inbox, Group key, and choose your name."
         ) {
           HStack(spacing: 20) {
             Button("Check again") { Task { await app.container.group.refreshKeyState() } }.buttonStyle(.outline)
@@ -161,6 +161,7 @@ struct GroupKeyView: View {
       try await call()
       app.show(done)
       await load()
+      await app.refreshMembersWaiting() // the Inbox's waiting notice: the old owner loses it, the new one gets it
     } catch {
       self.error = AppError.from(error).userMessage ?? "That did not work. Please try again."
     }

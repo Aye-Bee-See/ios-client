@@ -92,10 +92,13 @@ final class GroupRolesTests: XCTestCase {
     let news90 = await sam.container.activity.sync()
     XCTAssertEqual(news90.map(\.sentence), [])
 
+    let before = await noor.container.group.refreshKeyState()
+    guard case .notHeld = before else { return XCTFail("\(before)") }
     try await sam.container.group.handKey(to: 10)
-    hers = await noor.container.activity.sync()
+    hers = await noor.container.activity.sync(announce: true) // as the background fetch calls it: no screen involved
     XCTAssertEqual(hers.map(\.sentence), ["You have been handed the group key. Letters will open from your next refresh."])
     XCTAssertEqual(hers.first?.kind, .groupKeyHanded(toMe: true))
+    XCTAssertTrue(noor.container.keyring.state.isReady, "the feed itself reloaded the key: nothing else was asked")
 
     let holderRoster = try await sam.container.group.roster()
     let holder = try XCTUnwrap(holderRoster.members.first { $0.id == 10 })
