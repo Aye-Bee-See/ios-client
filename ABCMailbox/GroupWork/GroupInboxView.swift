@@ -244,7 +244,11 @@ private struct WritersTab: View {
             Divider().overlay(Theme.rule)
           }
         }
-        Button("Add a writer") { app.push(.addWriter) }.buttonStyle(.primaryCompact).padding(20)
+        HStack(spacing: 20) {
+          Button("Add a writer") { app.push(.addWriter) }.buttonStyle(.primaryCompact)
+          Button("Print invite codes") { app.push(.inviteCodes) }.buttonStyle(.link)
+        }
+        .padding(20)
       }
       .frame(maxWidth: 700, alignment: .leading)
       .frame(maxWidth: .infinity)

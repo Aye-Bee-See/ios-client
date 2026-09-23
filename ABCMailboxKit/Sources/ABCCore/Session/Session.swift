@@ -14,6 +14,8 @@ public struct SessionUser: Codable, Equatable, Sendable {
   public let email: String?
   public let role: String
   public let chapterId: Int?
+  /// The chapter whose invite code made this account (API PR #116), or nil. Read from the server, never sent to it.
+  public var sponsoredBy: Int? = nil
 
   public var displayName: String { name?.nonBlank ?? username }
   public var isStaff: Bool { role == Role.chapter || role == Role.admin }
@@ -33,7 +35,7 @@ extension LoginData {
     Session(
       token: token.token,
       expiresAtMillis: token.expires,
-      user: SessionUser(id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, chapterId: user.chapterId)
+      user: SessionUser(id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, chapterId: user.chapterId, sponsoredBy: user.sponsoredBy)
     )
   }
 }

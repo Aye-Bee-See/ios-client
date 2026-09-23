@@ -27,6 +27,8 @@ enum Route: Hashable {
   case groupKey
   /// What the directory says about how much mail the group handles, and the one number of it that a person types.
   case groupNumbers
+  /// Invite codes (API PR #116): print slips, see the quota, cancel unused codes.
+  case inviteCodes
   case changePassword
   case deleteAccount
 }
@@ -53,6 +55,8 @@ struct ComposeRequest: Hashable {
 enum AuthRoute: Hashable {
   /// `token` is set when the screen was opened by a claim link.
   case claim(token: String?)
+  /// `code` is set when the screen was opened by a join link (API PR #116).
+  case join(code: String?)
   case recover
 }
 
@@ -130,6 +134,12 @@ final class AppModel {
   func signIn() {
     authPath = []
     authPresented = true
+  }
+
+  /// A join link (the QR on an invite slip) opens the join form with the code filled in.
+  func openJoin(code: String?) {
+    authPresented = true
+    authPath = [.join(code: code)]
   }
 
   /// `abcmailbox://claim?token=…` opens the claim form with the token filled in.

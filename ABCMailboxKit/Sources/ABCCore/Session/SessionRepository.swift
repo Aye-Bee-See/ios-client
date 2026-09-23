@@ -261,6 +261,50 @@ public final class SessionRepository {
     return session
   }
 
+  // MARK: - Joining with an invite code (API PR #116)
+
+  /// Who is inviting; the code must already be normalised. Public, rate limited like a claim check.
+  public func joinInfo(code: String) async throws -> JoinInfo {
+    let envelope: APIEnvelope<JoinInfoDTO> = try await api.get("auth/join", query: [("code", code)], anonymous: true)
+    let d = try envelope.required("invite")
+    return JoinInfo(groupId: d.chapter?.id ?? 0, groupName: d.chapter?.name ?? "A support group", expiresAt: d.expiresAt.flatMap(parseInstant))
+  }
+
+  /// Makes the account and signs in. The keypair is made here; the password never reaches the server where it
+  /// knows the split scheme (every account will, from the first push). A `400` (a taken username) does not spend
+  /// the code: the person fixes it and sends the same code again.
+  @discardableResult
+  public func join(code: String, username: String, password: String, email: String?, name: String?) async throws -> Session {
+    let userName = username.trimmed
+    let split = try await splitSupported(userName)
+    var request = JoinRequest(code: code, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank)
+    var recoveryCode: String?
+    if await modes.current() == .e2e {
+      let fresh = split ? try await engine.createAccountKeysSplit(password: password) : try await engine.createAccountKeys(password: password)
+      let f = fresh.fields
+      request.publicKey = f.publicKey
+      request.wrappedPrivateKey = f.password.wrapped; request.kdfSalt = f.password.salt; request.kdfParams = f.password.params
+      request.recoveryWrappedPrivateKey = f.recovery.wrapped; request.recoverySalt = f.recovery.salt; request.recoveryKdfParams = f.recovery.params
+      if let authKey = fresh.authKey { request.password = authKey; request.authScheme = Self.split }
+      recoveryCode = fresh.recoveryCode
+      // The key goes into the vault only once the account exists, below, under its new id.
+      vaultAfterJoin = fresh.keyPair
+    } else if split {
+      let salt = engine.newSalt()
+      let keys = try await engine.deriveSplit(password: password, salt: salt, params: KdfParams.standard)
+      request.password = keys.authKey; request.authScheme = Self.split; request.kdfSalt = salt; request.kdfParams = .standard
+      keys.wipe()
+    }
+    defer { vaultAfterJoin = nil }
+    let envelope: APIEnvelope<JoinedDTO> = try await api.send("POST", "auth/join", body: request)
+    if let made = envelope.data?.user, let keyPair = vaultAfterJoin { vault.put(userId: made.id, keyPair: keyPair) }
+    let session = try await login(username: userName, password: password)
+    if let recoveryCode { pendingRecoveryCode = recoveryCode }
+    return session
+  }
+
+  @ObservationIgnored private var vaultAfterJoin: Sodium.KeyPair?
+
   /// Verifies `current` by signing in with it, changes the password, and adopts the fresh token. The new
   /// password goes split wherever the server knows the scheme: this is how an account made before it moves.
   public func changePassword(current: String, new: String) async throws {

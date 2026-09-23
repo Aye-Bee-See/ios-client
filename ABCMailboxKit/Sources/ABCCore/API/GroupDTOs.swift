@@ -92,6 +92,50 @@ struct MemberKeysDTO: Decodable {
   let waiting: [Int]?
 }
 
+// Invite codes (API PR #116): a batch is issued once and shown once; afterwards the chapter sees counts.
+struct IssueInviteCodesRequest: Encodable {
+  let count: Int
+  let label: String?
+  let days: Int?
+}
+
+struct IssuedInviteCodesDTO: Decodable {
+  let batch: String?
+  let label: String?
+  let expiresAt: String?
+  let codes: [String]?
+  let outstanding: Int?
+  let limit: Int?
+}
+
+struct InviteCodeBatchDTO: Decodable {
+  let batch: String
+  let label: String?
+  let createdAt: String?
+  let expiresAt: String?
+  let total: Int?
+  let used: Int?
+  let cancelled: Int?
+  let expired: Int?
+  let unused: Int?
+}
+
+struct InviteCodesDTO: Decodable {
+  let outstanding: Int?
+  let limit: Int?
+  let batches: [InviteCodeBatchDTO]?
+}
+
+struct CancelInviteCodesRequest: Encodable {
+  let batch: String?
+  let all: Bool?
+}
+
+struct CancelledInviteCodesDTO: Decodable {
+  let cancelled: Int?
+  let outstanding: Int?
+}
+
 /// `PUT /auth/chapter-owner`: make another group admin of the chapter its group-owner admin (API PR #115).
 struct OwnerRequest: Encodable {
   let chapter: Int
