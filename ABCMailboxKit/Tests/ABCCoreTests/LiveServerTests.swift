@@ -562,6 +562,69 @@ final class LiveServerTests: XCTestCase {
     XCTAssertFalse(samsPreview.isOwnerWithOtherAdmins)
   }
 
+  /// Invite codes (API PR #116) on an end-to-end server with the flag on: a chapter issues a batch, a newcomer
+  /// joins with one (the keypair made here, the password nowhere), writes a sealed letter, and the chapter sees
+  /// counts only; a cancelled code says so by its code.
+  ///
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerInviteCodes
+  func testThrowawayServerInviteCodes() async throws {
+    let member = try container("ABC_LIVE_THROWAWAY"), newcomer = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test makes an account") }
+    await member.modes.refresh(); await newcomer.modes.refresh()
+    try XCTSkipIf(member.modes.mode != .e2e, "written for an end-to-end server")
+    try await member.sessions.login(username: "member1", password: "password1")
+    member.sessions.recoveryCodeSaved()
+    _ = await member.group.setUpKeys()
+
+    let issued = try await member.group.issueInviteCodes(count: 2, label: "iOS live test", days: 3)
+    print("live #116: issued \(issued.codes) for batch \(issued.batch), use by \(issued.expiresAt.map(String.init(describing:)) ?? "?"), \(issued.outstanding) of \(issued.limit) out")
+    XCTAssertEqual(issued.codes.count, 2); XCTAssertTrue(issued.codes.allSatisfy(InviteCode.isWellFormed))
+    let quota = try await member.group.inviteCodes()
+    XCTAssertEqual(quota.batches.first?.label, "iOS live test"); XCTAssertEqual(quota.batches.first?.unused, 2)
+
+    // The newcomer, typing the slip anyhow.
+    let typed = issued.codes[0].lowercased().replacingOccurrences(of: "-", with: " ")
+    let info = try await newcomer.sessions.joinInfo(code: InviteCode.normalise(typed))
+    print("live #116: \(info.groupName) is inviting, good until \(info.expiresAt.map(String.init(describing:)) ?? "?")")
+    XCTAssertEqual(info.groupName, "Test Chapter"); XCTAssertNotNil(info.expiresAt)
+    let username = "joined\(Int(Date().timeIntervalSince1970) % 100_000)"
+    await assertThrowsAppError(try await newcomer.sessions.join(code: InviteCode.normalise(typed), username: "member1", password: "Lantern river quiet map 4", email: nil, name: nil)) {
+      print("live #116: a taken username is refused with: \($0)")
+      guard case .validation = $0 else { return XCTFail("expected a 400, got \($0)") }
+    }
+    _ = try await newcomer.sessions.joinInfo(code: InviteCode.normalise(typed)) // not spent
+    try await newcomer.sessions.join(code: InviteCode.normalise(typed), username: username, password: "Lantern river quiet map 4", email: nil, name: "Live Newcomer")
+    let user = try XCTUnwrap(newcomer.sessions.state.user)
+    XCTAssertEqual(user.sponsoredBy, info.groupId); XCTAssertEqual(user.role, Role.user)
+    XCTAssertNotNil(newcomer.vault.keyPair(for: user.id)); XCTAssertNotNil(newcomer.sessions.pendingRecoveryCode)
+    newcomer.sessions.recoveryCodeSaved()
+    let scheme = try await scheme(base, username)
+    XCTAssertEqual(scheme, "split")
+
+    // Sealed under the key made here, readable by the group.
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    let sent = try await newcomer.letters.send(NewLetter(prisonerId: 1, body: "From an invited writer.", relayNote: nil, relayChapter: groupId, groupRelaysFacility: true))
+    let queue = try await member.group.queue(groupId: groupId, status: .queued, page: 1, pageSize: 100)
+    XCTAssertEqual(queue.items.first { $0.id == sent.id }?.letter.body, "From an invited writer.")
+
+    // Counts only; the used code is dead by its code; the cancelled one too.
+    let after = try await member.group.inviteCodes()
+    XCTAssertEqual(after.batches.first?.used, 1); XCTAssertEqual(after.batches.first?.unused, 1)
+    await assertThrowsAppError(try await newcomer.sessions.joinInfo(code: InviteCode.normalise(issued.codes[0]))) { XCTAssertEqual($0.goneBecause, "used") }
+    let cancelled = try await member.group.cancelInviteCodes(batch: issued.batch)
+    XCTAssertEqual(cancelled, 1)
+    await assertThrowsAppError(try await newcomer.sessions.joinInfo(code: InviteCode.normalise(issued.codes[1]))) {
+      print("live #116: a cancelled code answers: \($0)")
+      XCTAssertEqual($0.goneBecause, "cancelled")
+    }
+    // Quota: the API's own sentence, with its numbers.
+    await assertThrowsAppError(try await member.group.issueInviteCodes(count: 50, label: "too many", days: nil)) {
+      print("live #116: over the quota: \($0.userMessage ?? "nil")")
+      XCTAssertTrue($0.isConflict)
+    }
+  }
+
   /// API PR #117 on an end-to-end server with the flag on: no automatic fallback (an account from before is refused
   /// until the person chooses "sign in with the password itself"), the return note on the letter, held counts on
   /// conversation rows, and a coded condition on a deletion refusal.

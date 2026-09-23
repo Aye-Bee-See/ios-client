@@ -44,6 +44,8 @@ struct UserDTO: Decodable {
   let name: String?
   let role: String
   let chapterId: Int?
+  /// The chapter whose invite code made the account (API PR #116). Read, never sent.
+  let sponsoredBy: Int?
   let managedBy: Int?
   let anonymousForChapter: Int?
   let publicKey: String?
@@ -93,6 +95,34 @@ struct ClaimInfoDTO: Decodable {
     guard let publicKey, let claimWrappedPrivateKey, let claimSalt, let claimKdfParams, claimKdfParams != .null else { return nil }
     return (publicKey, claimWrappedPrivateKey, claimSalt, claimKdfParams)
   }
+}
+
+/// `GET /auth/join?code=`: who is inviting, and until when (API PR #116).
+struct JoinInfoDTO: Decodable {
+  let chapter: NamedRef?
+  let expiresAt: String?
+}
+
+/// `POST /auth/join`: the same password and key fields as a claim, with the code instead of a token.
+struct JoinRequest: Encodable {
+  let code: String
+  let username: String
+  var password: String
+  let email: String?
+  let name: String?
+  var authScheme: String?
+  var publicKey: String?
+  var wrappedPrivateKey: String?
+  var kdfSalt: String?
+  var kdfParams: KdfParams?
+  var recoveryWrappedPrivateKey: String?
+  var recoverySalt: String?
+  var recoveryKdfParams: KdfParams?
+}
+
+struct JoinedDTO: Decodable {
+  let user: UserDTO?
+  let chapter: NamedRef?
 }
 
 struct ClaimRequest: Encodable {

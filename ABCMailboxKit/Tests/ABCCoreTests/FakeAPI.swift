@@ -1,3 +1,4 @@
+@testable import ABCCore
 import ABCCrypto
 import Foundation
 
@@ -19,6 +20,8 @@ final class FakeAPI: @unchecked Sendable {
     var name: String?
     /// The group's shared anonymous writer: not a person, and never has keys.
     var anonymousFor: Int?
+    /// The chapter whose invite code made the account (API PR #116).
+    var sponsoredBy: Int?
     /// API PR #114. For a split account `password` holds the auth key (44 characters of base64) and `keys` the
     /// `kdfSalt`/`kdfParams` the auth key was derived with, as on the server, where they are the same columns.
     var authScheme = "plain"
@@ -61,6 +64,11 @@ final class FakeAPI: @unchecked Sendable {
   var owners: [Int: Int] = [:]
   /// An API from before PR #115: no `owner` or `waiting` in the members list, no ownership endpoint, any holder may hand the key.
   var predatesGroupRoles = false
+  /// Invite codes (API PR #116): each code, normalised, with its batch, chapter and state; batches with their labels.
+  var inviteCodes: [String: (batch: String, chapter: Int, state: String)] = [:]
+  var inviteBatches: [String: (chapter: Int, label: String?, expiresAt: String, createdAt: String)] = [:]
+  var inviteLimit = 20
+  private var nextBatch = 0
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -173,7 +181,7 @@ final class FakeAPI: @unchecked Sendable {
   }
   private func index(_ id: Int) -> Int? { accounts.firstIndex { $0.id == id } }
   private func userJSON(_ a: Account) -> [String: Any] {
-    ["id": a.id, "username": a.username, "role": a.role, "chapterId": a.chapterId ?? NSNull(), "name": a.name ?? NSNull(), "managedBy": a.managedBy ?? NSNull(), "publicKey": a.keys["publicKey"] ?? NSNull()]
+    ["id": a.id, "username": a.username, "role": a.role, "chapterId": a.chapterId ?? NSNull(), "name": a.name ?? NSNull(), "managedBy": a.managedBy ?? NSNull(), "publicKey": a.keys["publicKey"] ?? NSNull(), "sponsoredBy": a.sponsoredBy ?? NSNull()]
   }
   private func bundle(_ a: Account) -> [String: Any] {
     var b: [String: Any] = [:]
@@ -210,6 +218,73 @@ final class FakeAPI: @unchecked Sendable {
     switch (r.method, r.path) {
     case ("GET", "/health"):
       return .json(["status": "ok", "encryptionMode": mode])
+
+    case ("POST", "/auth/invite-codes"):
+      guard let a = caller(r), a.role == "chapter", let g = a.chapterId else { return .error(403, info: "Forbidden") }
+      if inactiveGroups.contains(g) { return .error(403, info: "Your group is waiting for network approval.") }
+      guard let count = body["count"] as? Int, (1...50).contains(count) else { return .error(400, extra: ["errors": ["count must be between 1 and 50."]]) }
+      if let label = body["label"] as? String, label.count > 80 { return .error(400, extra: ["errors": ["label can be at most 80 characters."]]) }
+      let outstanding = inviteCodes.values.filter { $0.chapter == g && $0.state == "unused" }.count
+      if outstanding + count > inviteLimit { return .error(409, info: "Error issuing invite codes.", extra: ["name": "InviteQuotaError", "error": "This chapter has \(outstanding) unused codes and may have \(inviteLimit); \(count) more would go over."]) }
+      nextBatch += 1
+      let batch = "batch\(nextBatch)"
+      let days = body["days"] as? Int ?? 30
+      let expires = "2026-10-\(String(format: "%02d", min(22, days)))T19:00:00.000Z"
+      inviteBatches[batch] = (g, body["label"] as? String, expires, "2026-09-23T10:00:00.000Z")
+      var codes: [String] = []
+      for _ in 0..<count {
+        let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        let code = String((0..<12).map { _ in alphabet.randomElement()! })
+        inviteCodes[code] = (batch, g, "unused")
+        codes.append(InviteCode.pretty(code))
+      }
+      return .json(["data": ["chapter": g, "batch": batch, "label": body["label"] ?? NSNull(), "expiresAt": expires, "codes": codes, "outstanding": outstanding + count, "limit": inviteLimit], "info": "Invite codes issued. They are shown once.", "success": true, "status": 201], status: 201)
+
+    case ("GET", "/auth/invite-codes"):
+      guard let a = caller(r), a.role == "chapter", let g = a.chapterId else { return .error(403, info: "Forbidden") }
+      let mine = inviteBatches.filter { $0.value.chapter == g }.sorted { $0.key > $1.key }
+      let batches = mine.map { (id, b) -> [String: Any] in
+        let codes = inviteCodes.values.filter { $0.batch == id }
+        return ["batch": id, "label": b.label ?? NSNull(), "createdAt": b.createdAt, "expiresAt": b.expiresAt, "total": codes.count,
+                "used": codes.filter { $0.state == "used" }.count, "cancelled": codes.filter { $0.state == "cancelled" }.count,
+                "expired": codes.filter { $0.state == "expired" }.count, "unused": codes.filter { $0.state == "unused" }.count]
+      }
+      return .data(["chapter": g, "outstanding": inviteCodes.values.filter { $0.chapter == g && $0.state == "unused" }.count, "limit": inviteLimit, "batches": batches])
+
+    case ("DELETE", "/auth/invite-codes"):
+      guard let a = caller(r), a.role == "chapter", let g = a.chapterId else { return .error(403, info: "Forbidden") }
+      var cancelled = 0
+      for (code, c) in inviteCodes where c.chapter == g && c.state == "unused" && (body["all"] as? Bool == true || c.batch == body["batch"] as? String) {
+        inviteCodes[code] = (c.batch, c.chapter, "cancelled"); cancelled += 1
+      }
+      return .data(["cancelled": cancelled, "outstanding": inviteCodes.values.filter { $0.chapter == g && $0.state == "unused" }.count])
+
+    case ("GET", "/auth/join"), ("POST", "/auth/join"):
+      // Public: never a token. The code is folded as the server folds it.
+      let typed = r.method == "GET" ? (r.query["code"] ?? "") : (body["code"] as? String ?? "")
+      let code = InviteCode.normalise(typed)
+      guard let c = inviteCodes[code] else { return .error(404, info: "This invite code is not valid.", extra: ["name": "InviteCodeError", "error": "Invite code is unknown.", "condition": "unknown"]) }
+      let inactive = inactiveGroups.contains(c.chapter)
+      if c.state != "unused" || inactive {
+        let condition = inactive ? "inactive" : c.state
+        return .error(410, info: inactive ? "The chapter that issued this invite code is not active." : "This invite code is \(c.state).", extra: ["name": "InviteCodeError", "error": "Invite code is \(condition).", "condition": condition])
+      }
+      let chapter: [String: Any] = ["id": c.chapter, "name": "Test Chapter"]
+      if r.method == "GET" { return .data(["chapter": chapter, "expiresAt": inviteBatches[c.batch].map { $0.expiresAt as Any } ?? NSNull()]) }
+      guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
+      if accounts.contains(where: { $0.username == username }) { return .error(400, extra: ["errors": ["That username is taken."]]) }
+      guard body["password"] is String else { return .error(400, extra: ["errors": ["password is required."]]) }
+      var made = Account(id: id(), username: username, password: body["password"] as! String, name: body["name"] as? String)
+      accounts.append(made)
+      let i = accounts.count - 1
+      if let refused = scheme(body, for: i, creating: true) { accounts.removeLast(); return refused }
+      if mode == "e2e", body["publicKey"] != nil, body["wrappedPrivateKey"] == nil { accounts.removeLast(); return .error(400, extra: ["errors": ["publicKey must come with wrappedPrivateKey, kdfSalt and kdfParams."]]) }
+      for k in ["publicKey", "wrappedPrivateKey", "kdfSalt", "kdfParams", "recoveryWrappedPrivateKey", "recoverySalt", "recoveryKdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }
+      accounts[i].sponsoredBy = c.chapter
+      made = accounts[i]
+      inviteCodes[code] = (c.batch, c.chapter, "used")
+      let user = userJSON(made)
+      return .json(["data": ["user": user, "chapter": chapter], "success": true, "status": 201], status: 201)
 
     case ("GET", "/auth/login-params"):
       // Public, and never says whether an account exists: an unknown or plain name gets a made-up but stable salt.
