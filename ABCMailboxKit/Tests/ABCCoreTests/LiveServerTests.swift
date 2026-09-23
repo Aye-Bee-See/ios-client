@@ -241,8 +241,10 @@ final class LiveServerTests: XCTestCase {
     await writer.modes.refresh(); await member.modes.refresh()
     try XCTSkipIf(writer.modes.mode == .e2e, "written for server mode")
     let admin = try await Admin.signIn(base)
-    try await writer.sessions.login(username: "user1", password: "password1")
-    try await member.sessions.login(username: "member1", password: "password1")
+    // The seeded accounts were made before REQUIRE_SPLIT_AUTH went on; since API PR #117 there is no automatic
+    // fallback, so they sign in by the explicit choice (harmless on a server without the flag).
+    try await writer.sessions.login(username: "user1", password: "password1", olderAccount: true)
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
     let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
     await writer.activity.sync() // whatever the seed left in the feed is not this test's news
 
@@ -328,8 +330,8 @@ final class LiveServerTests: XCTestCase {
     let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
     for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test moves letters") }
     await writer.modes.refresh(); await member.modes.refresh()
-    try await writer.sessions.login(username: "user1", password: "password1")
-    try await member.sessions.login(username: "member1", password: "password1")
+    try await writer.sessions.login(username: "user1", password: "password1", olderAccount: true)
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
     let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
     await writer.activity.sync()
 
@@ -386,7 +388,7 @@ final class LiveServerTests: XCTestCase {
     let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
     for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test replaces a writer's claim token") }
     await member.modes.refresh(); await newcomer.modes.refresh()
-    try await member.sessions.login(username: "member1", password: "password1")
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
     let writers = try await member.group.writers()
     let writer = try XCTUnwrap(writers.first, "dev-seed adds a managed writer")
 
@@ -430,7 +432,7 @@ final class LiveServerTests: XCTestCase {
     XCTAssertEqual(memberScheme, "split", "under the flag the handshake calls every name split")
 
     // 1. An account from before: the auth key is refused, the password follows once, keys are made at that sign-in.
-    try await member.sessions.login(username: "member1", password: "password1")
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
     XCTAssertFalse(member.schemes.isKnownSplit("member1"), "a fallback sign-in is not a split one")
     let memberKey = try Data(XCTUnwrap(member.vault.keyPair(for: try XCTUnwrap(member.sessions.state.user?.id))).privateKey)
     member.sessions.recoveryCodeSaved()
@@ -503,7 +505,7 @@ final class LiveServerTests: XCTestCase {
     await sam.modes.refresh(); await noor.modes.refresh()
     try XCTSkipIf(sam.modes.mode != .e2e, "written for an end-to-end server")
 
-    try await sam.sessions.login(username: "member1", password: "password1")
+    try await sam.sessions.login(username: "member1", password: "password1", olderAccount: true)
     sam.sessions.recoveryCodeSaved()
     let setUp = await sam.group.setUpKeys()
     XCTAssertTrue(setUp.madeGroupKey || sam.group.keyState.isReady)
@@ -511,7 +513,7 @@ final class LiveServerTests: XCTestCase {
     XCTAssertTrue(samsKey.isOwner, "the first group admin to set up the key becomes the owner")
     let samId = try XCTUnwrap(sam.sessions.state.user?.id)
 
-    try await noor.sessions.login(username: "member2", password: "password2")
+    try await noor.sessions.login(username: "member2", password: "password2", olderAccount: true)
     noor.sessions.recoveryCodeSaved()
     let noorId = try XCTUnwrap(noor.sessions.state.user?.id)
     var roster = try await sam.group.roster()
@@ -573,7 +575,7 @@ final class LiveServerTests: XCTestCase {
     for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test makes an account") }
     await member.modes.refresh(); await newcomer.modes.refresh()
     try XCTSkipIf(member.modes.mode != .e2e, "written for an end-to-end server")
-    try await member.sessions.login(username: "member1", password: "password1")
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
     member.sessions.recoveryCodeSaved()
     _ = await member.group.setUpKeys()
 

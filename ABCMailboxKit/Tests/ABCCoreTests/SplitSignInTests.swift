@@ -43,6 +43,11 @@ final class SplitSignInTests: XCTestCase {
     XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, kp.privateKey, "opened with the wrap key of that sign-in")
     XCTAssertFalse(sessions.keysLocked)
     XCTAssertTrue(app.container.schemes.isKnownSplit(" User1 "), "remembered, whatever the case")
+    // Per server: the same name on a development server the app is pointed at is another account.
+    _ = try await app.container.devServer.set("http://192.168.1.20:3000/")
+    XCTAssertFalse(app.container.schemes.isKnownSplit("user1"), "not known on the other server")
+    await app.container.devServer.reset()
+    XCTAssertTrue(app.container.schemes.isKnownSplit("user1"), "and still known on this one")
   }
 
   func testAnOlderAPIWithoutTheHandshakeIsPlainEverywhere() async throws {
