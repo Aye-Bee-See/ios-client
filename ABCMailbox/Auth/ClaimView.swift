@@ -32,7 +32,7 @@ final class ClaimModel {
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !token.trimmingCharacters(in: .whitespaces).isEmpty }
   var canClaim: Bool {
-    !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && password.count >= 7 && passwordsMatch && understood
+    !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && PasswordRules.isLongEnough(password) && passwordsMatch && understood
   }
 
   func edited() { error = nil }
@@ -140,7 +140,8 @@ struct ClaimView: View {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("claim-username")
     }
-    PasswordField(label: "Password", text: $model.password, show: $model.showPassword, hint: "At least 7 characters", isNew: true)
+    PasswordField(label: "Password", text: $model.password, show: $model.showPassword, hint: PasswordRules.lengthHint, isNew: true)
+    PasswordStrengthMeter(password: model.password)
       .accessibilityIdentifier("claim-password")
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)

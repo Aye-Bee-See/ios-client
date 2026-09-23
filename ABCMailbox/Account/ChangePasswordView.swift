@@ -15,7 +15,7 @@ final class ChangePasswordModel {
   init(app: AppModel) { self.app = app }
 
   var matches: Bool { new == confirm }
-  var canSubmit: Bool { !busy && !current.isEmpty && new.count >= 7 && matches && new != current }
+  var canSubmit: Bool { !busy && !current.isEmpty && PasswordRules.isLongEnough(new) && matches && new != current }
 
   func edited() { error = nil }
 
@@ -43,8 +43,9 @@ struct ChangePasswordView: View {
     Screen(spacing: 14, horizontal: 24) {
       Text("Changing your password signs out every other device. This one stays signed in.").font(Theme.bodyLarge)
       PasswordField(label: "Current password", text: $model.current, show: $model.show).accessibilityIdentifier("pw-current")
-      PasswordField(label: "New password", text: $model.new, show: $model.show, hint: "At least 7 characters, different from the current one", isNew: true, showsToggle: false)
+      PasswordField(label: "New password", text: $model.new, show: $model.show, hint: "At least \(PasswordRules.minLength) characters, different from the current one", isNew: true, showsToggle: false)
         .accessibilityIdentifier("pw-new")
+      PasswordStrengthMeter(password: model.new)
       let mismatch = !model.confirm.isEmpty && !model.matches
       PasswordField(label: "Confirm new password", text: $model.confirm, show: $model.show, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
         .accessibilityIdentifier("pw-confirm")

@@ -27,18 +27,20 @@ public final class SessionRepository {
   @ObservationIgnored private let modes: EncryptionModeRepository
   @ObservationIgnored private let engine: CryptoEngine
   @ObservationIgnored private let vault: KeyVault
+  @ObservationIgnored private let schemes: SchemeMemory
   /// Whoever else holds secrets for the signed-in account (the group keyring) clears them here.
   @ObservationIgnored var onSignedOut: [@MainActor () -> Void] = []
   /// The claim check's key material, kept so claiming does not spend a second rate-limited check.
   @ObservationIgnored private var lastClaim: (token: String, info: ClaimInfoDTO)?
 
-  init(secrets: SecretStore, api: APIClient, cache: SessionCache, modes: EncryptionModeRepository, engine: CryptoEngine, vault: KeyVault) {
+  init(secrets: SecretStore, api: APIClient, cache: SessionCache, modes: EncryptionModeRepository, engine: CryptoEngine, vault: KeyVault, schemes: SchemeMemory) {
     self.store = SessionStore(store: secrets)
     self.api = api
     self.cache = cache
     self.modes = modes
     self.engine = engine
     self.vault = vault
+    self.schemes = schemes
     let saved = store.load()
     self.state = saved.map(SessionState.signedIn) ?? .signedOut
     cache.token = saved?.token
@@ -74,30 +76,99 @@ public final class SessionRepository {
   /// The writer confirmed they saved the code; forget it.
   public func recoveryCodeSaved() { pendingRecoveryCode = nil }
 
+  // MARK: - Signing in (API PR #114: the password never reaches the server)
+
+  private static let split = "split"
+
+  /// What goes to the server as the password. For a split account it is the auth key, derived here from the
+  /// password and the account's salt; the password itself never leaves the phone. For an account made before
+  /// the split scheme it is the password, as it always was. The wrap key comes with it, for the private key.
+  private struct Credential {
+    let serverPassword: String
+    let split: SplitKeys?
+    let salt: String?
+    let params: JSONValue?
+    var isSplit: Bool { split != nil }
+    func wipe() { split?.wipe() }
+    static func plain(_ password: String) -> Credential { Credential(serverPassword: password, split: nil, salt: nil, params: nil) }
+  }
+
+  static func downgradeRefused(_ username: String) -> AppError {
+    .forbidden("This phone has signed in to \(username) without sending the password, and the server now asks for the password itself. That is not how this account works, so nothing was sent. Try again later; if it keeps happening, tell your group.")
+  }
+
+  /// Step one: the handshake. Nil from an API from before PR #114, which has no such address: every account on it is plain.
+  private func loginParams(_ username: String) async throws -> LoginParamsDTO? {
+    do {
+      let envelope: APIEnvelope<LoginParamsDTO> = try await api.get("auth/login-params", query: [("username", username)], anonymous: true)
+      return envelope.data ?? LoginParamsDTO(scheme: nil, kdfSalt: nil, kdfParams: nil)
+    } catch let e as AppError where e.isNotFound {
+      return nil
+    }
+  }
+
+  private func credential(username: String, password: String) async throws -> Credential {
+    let params = try await loginParams(username)
+    if let params, params.isSplit, let salt = params.kdfSalt, let kdf = params.kdfParams {
+      let keys = try await engine.deriveSplit(password: password, salt: salt, params: kdf)
+      return Credential(serverPassword: keys.authKey, split: keys, salt: salt, params: kdf)
+    }
+    // This phone has signed in to this name without sending the password. A server that now asks for the
+    // password itself is not the server this account was made on, or has been tampered with. Nothing is sent.
+    if schemes.isKnownSplit(username) { throw Self.downgradeRefused(username) }
+    return .plain(password)
+  }
+
+  /// Whether the server knows the split scheme at all. Wherever a password is set, it is set split if so.
+  private func splitSupported(_ username: String) async throws -> Bool { try await loginParams(username) != nil }
+
+  /// `POST /auth/login` with the credential the handshake calls for, and the answer with the credential the
+  /// server accepted. Once REQUIRE_SPLIT_AUTH is on, the server says "split" for every name so as to say
+  /// nothing about any of them, and an account made before the scheme can only sign in with the password
+  /// itself. So a refused auth key is followed, once, by the password, but only for a name this phone has
+  /// never known as split: for a known one the refusal stands, and the password stays here.
+  private func signIn(_ name: String, password: String) async throws -> (LoginData, Credential) {
+    let cred = try await credential(username: name, password: password)
+    do {
+      let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: name, password: cred.serverPassword))
+      return (try envelope.required("login response"), cred)
+    } catch let e as AppError where e.isUnauthorized && cred.isSplit && !schemes.isKnownSplit(name) {
+      cred.wipe()
+      let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: name, password: password))
+      return (try envelope.required("login response"), .plain(password))
+    } catch {
+      cred.wipe()
+      throw error
+    }
+  }
+
   @discardableResult
   public func login(username: String, password: String) async throws -> Session {
-    let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: username.trimmed, password: password))
-    let response = try envelope.required("login response")
+    let name = username.trimmed
+    let (response, cred) = try await signIn(name, password: password)
+    defer { cred.wipe() }
     let session = response.toSession()
     // A different account signing in over a live one must not inherit its keys.
     if let current = state.user, current.id != session.user.id { forgetLocally() }
     adopt(session)
+    if cred.isSplit { schemes.rememberSplit(name) }
     _ = await modes.current()
-    await prepareKeys(session, bundle: response.keys, password: password)
+    await prepareKeys(session, bundle: response.keys, password: password, cred: cred)
     return session
   }
 
   /// Right after signing in, in either mode (API PR #95). Keys can only be made at sign-in: the
-  /// private key is wrapped under the password, and this is the one moment the app holds it. So the
-  /// move to end-to-end encryption does not depend on reaching every person: it happens as they
-  /// sign in, while the server is still in server mode, where the key endpoints already work.
+  /// private key is wrapped under the password (or, split, under a key derived beside the auth key),
+  /// and this is the one moment the app holds it. So the move to end-to-end encryption does not
+  /// depend on reaching every person: it happens as they sign in.
   ///
-  /// An account that has keys gets them unwrapped with the password just typed. An account that
-  /// has none gets a keypair now: generated here, wrapped under the password and a new recovery
-  /// code, and uploaded whole (the server seals the person's existing letters to them on the spot).
+  /// An account that has keys gets them unwrapped: split, with the wrap key from this very sign-in;
+  /// plain, with the password just typed. An account that has none gets a keypair now: generated
+  /// here, wrapped (split: under the wrap key, with the sign-in's own salt, so the one derivation keeps
+  /// opening both the server's door and the key) and under a new recovery code, and uploaded whole.
   /// The recovery code is then shown once and cannot be skipped. Admins never have keys. A failure
   /// leaves the account signed in; on an end-to-end server it is locked, and the inbox offers to unlock.
-  private func prepareKeys(_ session: Session, bundle: KeyBundleDTO?, password: String) async {
+  private func prepareKeys(_ session: Session, bundle: KeyBundleDTO?, password: String, cred: Credential) async {
     let userId = session.user.id
     guard session.user.role != Role.admin else { return }
     do {
@@ -105,9 +176,14 @@ public final class SessionRepository {
       var bundle = bundle
       if bundle == nil { bundle = (try await api.get("auth/keys") as APIEnvelope<KeyBundleDTO>).data }
       if let m = bundle?.material {
-        vault.put(userId: userId, keyPair: try await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: password, salt: m.salt, params: m.params))
+        vault.put(userId: userId, keyPair: try await open(m, password: password, cred: cred))
       } else {
-        let fresh = try await engine.createAccountKeys(password: password)
+        let fresh: NewAccountKeys
+        if let split = cred.split, let salt = cred.salt, let params = cred.params {
+          fresh = try await engine.createAccountKeysUnderWrapKey(split.wrapKey, salt: salt, params: params)
+        } else {
+          fresh = try await engine.createAccountKeys(password: password)
+        }
         try await api.send("PUT", "auth/keys", body: KeyFieldsRequest(fresh.fields))
         vault.put(userId: userId, keyPair: fresh.keyPair)
         pendingRecoveryCode = fresh.recoveryCode
@@ -115,6 +191,12 @@ public final class SessionRepository {
     } catch {
       // Signed in but locked; see above.
     }
+  }
+
+  /// Opens the account's private key with the sign-in's credential: split, the wrap key; plain, the password.
+  private func open(_ m: (publicKey: String, wrapped: String, salt: String, params: JSONValue), password: String, cred: Credential) async throws -> Sodium.KeyPair {
+    if let split = cred.split { return try await engine.unlockWithWrapKey(publicKey: m.publicKey, wrapped: m.wrapped, wrapKey: split.wrapKey) }
+    return try await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: password, salt: m.salt, params: m.params)
   }
 
   /// Tells the server to end the token (so a stolen copy stops working), then
@@ -134,10 +216,13 @@ public final class SessionRepository {
     return ClaimInfo(writerName: d.writer.name ?? "your account", groupName: d.chapter?.name, expiresAt: d.expiresAt.flatMap(parseInstant), endToEnd: d.material != nil)
   }
 
-  /// Claims the account, then signs in with the new credentials.
+  /// Claims the account, then signs in with the new credentials. Every new account is split where the
+  /// server knows the scheme (API PR #114): the password never reaches it.
   @discardableResult
   public func claim(token: String, username: String, password: String, email: String?) async throws -> Session {
-    var request = ClaimRequest(token: token, username: username.trimmed, password: password, email: email?.trimmed.nonBlank)
+    let name = username.trimmed
+    let split = try await splitSupported(name)
+    var request = ClaimRequest(token: token, username: name, password: password, email: email?.trimmed.nonBlank)
     var recoveryCode: String?
     if let lastClaim, lastClaim.token == token, let m = lastClaim.info.material {
       // End-to-end: the group made this keypair. Open it with the token, then re-wrap the very same
@@ -146,7 +231,7 @@ public final class SessionRepository {
       let fresh: NewAccountKeys
       do {
         let keyPair = try await engine.unlockWithCode(publicKey: m.publicKey, wrapped: m.wrapped, code: token, salt: m.salt, params: m.params)
-        fresh = try await engine.rewrapAll(keyPair, password: password)
+        fresh = split ? try await engine.rewrapAllSplit(keyPair, password: password) : try await engine.rewrapAll(keyPair, password: password)
       } catch {
         throw AppError.validation(["This token does not open the account's key. Ask your group for a new token."])
       }
@@ -154,35 +239,58 @@ public final class SessionRepository {
       let f = fresh.fields
       request.wrappedPrivateKey = f.password.wrapped; request.kdfSalt = f.password.salt; request.kdfParams = f.password.params
       request.recoveryWrappedPrivateKey = f.recovery.wrapped; request.recoverySalt = f.recovery.salt; request.recoveryKdfParams = f.recovery.params
+      if let authKey = fresh.authKey { request.password = authKey; request.authScheme = Self.split }
+    } else if split {
+      // No keys to wrap (a server-mode API), but the password still never leaves the phone: an auth key under a fresh salt.
+      let salt = engine.newSalt()
+      let keys = try await engine.deriveSplit(password: password, salt: salt, params: KdfParams.standard)
+      request.password = keys.authKey; request.authScheme = Self.split; request.kdfSalt = salt; request.kdfParams = .standard
+      keys.wipe()
     }
     try await api.send("POST", "auth/claim", body: request)
-    let session = try await login(username: username, password: password)
+    let session = try await login(username: name, password: password)
     if let recoveryCode { pendingRecoveryCode = recoveryCode }
     return session
   }
 
-  /// Verifies `current` by signing in with it, changes the password, and adopts the fresh token.
+  /// Verifies `current` by signing in with it, changes the password, and adopts the fresh token. The new
+  /// password goes split wherever the server knows the scheme: this is how an account made before it moves.
   public func changePassword(current: String, new: String) async throws {
     guard let session = state.session else { throw AppError.unauthorized("You are signed out.") }
-    // The API does not ask for the current password, so confirm it by signing in with it.
-    guard try await passwordIsRight(current) else { throw AppError.validation(["Your current password is incorrect."]) }
+    // The API does not ask for the current password, so confirm it by signing in with it (in whichever scheme the account uses).
+    guard let proof = try await prove(current) else { throw AppError.validation(["Your current password is incorrect."]) }
+    defer { proof.wipe() }
+    let name = session.user.username
+    let split = try await splitSupported(name)
     var request = UpdateUserRequest(id: session.user.id, password: new)
-    // The private key is wrapped under the password, so a new password means a new wrapping: in either
-    // mode, now that accounts have keys before the switch. Changing the password without it would leave
-    // the key under the old one. If this phone does not hold the key, the current password (just proven
-    // right) opens the server's copy.
+    // The private key is wrapped under the password (or, split, under a key derived beside the auth key), so a
+    // new password means a new wrapping: in either mode, now that accounts have keys before the switch.
+    // Changing the password without it would leave the key under the old one. If this phone does not hold
+    // the key, the current password (just proven right) opens the server's copy.
     var keyPair = vault.keyPair(for: session.user.id)
     if keyPair == nil, let m = (try? await api.get("auth/keys") as APIEnvelope<KeyBundleDTO>)?.data?.material {
-      keyPair = try? await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: current, salt: m.salt, params: m.params)
+      keyPair = try? await open(m, password: current, cred: proof)
       if let keyPair { vault.put(userId: session.user.id, keyPair: keyPair) }
     }
     if let keyPair {
-      let w = try await wrapped(keyPair, under: new)
-      request.wrappedPrivateKey = w.wrapped; request.kdfSalt = w.salt; request.kdfParams = w.params
+      if split {
+        let (w, authKey) = try await wrappedSplit(keyPair, under: new)
+        request.password = authKey; request.authScheme = Self.split
+        request.wrappedPrivateKey = w.wrapped; request.kdfSalt = w.salt; request.kdfParams = w.params
+      } else {
+        let w = try await wrapped(keyPair, under: new)
+        request.wrappedPrivateKey = w.wrapped; request.kdfSalt = w.salt; request.kdfParams = w.params
+      }
     } else if await modes.current() == .e2e {
       throw AppError.lettersLocked
+    } else if split {
+      let salt = engine.newSalt()
+      let keys = try await engine.deriveSplit(password: new, salt: salt, params: KdfParams.standard)
+      request.password = keys.authKey; request.authScheme = Self.split; request.kdfSalt = salt; request.kdfParams = .standard
+      keys.wipe()
     }
     let envelope: APIEnvelope<UpdateUserData> = try await api.send("PUT", "auth/user", body: request)
+    if split { schemes.rememberSplit(name) }
     // Every older token (including the one just used) is dead now; keep this device signed in.
     if let fresh = envelope.data?.token {
       var kept = session
@@ -192,22 +300,32 @@ public final class SessionRepository {
     }
   }
 
-  /// Fetches the key bundle and unwraps it with the password.
+  /// Fetches the key bundle and unwraps it with the password: split, through the wrap key derived beside the auth key.
   public func unlock(password: String) async throws {
     guard let session = state.session else { throw AppError.unauthorized("You are signed out.") }
     let envelope: APIEnvelope<KeyBundleDTO> = try await api.get("auth/keys")
     guard let m = envelope.data?.material else { throw AppError.validation(["This account has no keys yet. Sign out and sign in again to set them up."]) }
+    let cred = try await credential(username: session.user.username, password: password)
+    defer { cred.wipe() }
     do {
-      vault.put(userId: session.user.id, keyPair: try await engine.unlockWithPassword(publicKey: m.publicKey, wrapped: m.wrapped, password: password, salt: m.salt, params: m.params))
+      vault.put(userId: session.user.id, keyPair: try await open(m, password: password, cred: cred))
     } catch {
+      // Under REQUIRE_SPLIT_AUTH the handshake calls every name split; an account from before has its key
+      // under the password itself. As at sign-in: the password, once, for a name this phone has never known as split.
+      if cred.isSplit, !schemes.isKnownSplit(session.user.username), let keyPair = try? await open(m, password: password, cred: .plain(password)) {
+        vault.put(userId: session.user.id, keyPair: keyPair)
+        return
+      }
       throw AppError.validation(["That password does not open your letters."])
     }
   }
 
-  /// Recovery with the saved code: proves possession of the key, sets a new password, signs in.
+  /// Recovery with the saved code: proves possession of the key, sets a new password (split, where the server
+  /// knows the scheme), signs in.
   @discardableResult
   public func recover(username: String, recoveryCode: String, newPassword: String) async throws -> Session {
-    let envelope: APIEnvelope<RecoverStartDTO> = try await api.get("auth/recover", query: [("username", username.trimmed)])
+    let name = username.trimmed
+    let envelope: APIEnvelope<RecoverStartDTO> = try await api.get("auth/recover", query: [("username", name)])
     let start = try envelope.required("recovery response")
     let keyPair: Sodium.KeyPair
     do {
@@ -218,37 +336,59 @@ public final class SessionRepository {
     // Opening the sealed challenge proves to the server that we hold the private key.
     let challenge: String
     do { challenge = try AccountKeys.openChallenge(start.sealedChallenge, keyPair: keyPair) } catch { throw AppError.unexpected("The server's challenge could not be opened.") }
-    let w = try await wrapped(keyPair, under: newPassword)
-    try await api.send("POST", "auth/recover", body: RecoverFinishRequest(username: username.trimmed, challenge: challenge, password: newPassword, wrappedPrivateKey: w.wrapped, kdfSalt: w.salt, kdfParams: w.params))
-    return try await login(username: username, password: newPassword)
+    let finish: RecoverFinishRequest
+    if try await splitSupported(name) {
+      let (w, authKey) = try await wrappedSplit(keyPair, under: newPassword)
+      finish = RecoverFinishRequest(username: name, challenge: challenge, password: authKey, wrappedPrivateKey: w.wrapped, kdfSalt: w.salt, kdfParams: w.params, authScheme: Self.split)
+    } else {
+      let w = try await wrapped(keyPair, under: newPassword)
+      finish = RecoverFinishRequest(username: name, challenge: challenge, password: newPassword, wrappedPrivateKey: w.wrapped, kdfSalt: w.salt, kdfParams: w.params)
+    }
+    try await api.send("POST", "auth/recover", body: finish)
+    return try await login(username: name, password: newPassword)
   }
 
-  /// Whether `password` is the signed-in account's, asked of the server by signing in with it. Sign-in never
-  /// carries the session token, so a wrong guess is not mistaken for a revoked session, and guesses are
-  /// rate limited there like any failed sign-in (a 429 is thrown, not swallowed).
+  /// Whether `password` is the signed-in account's, asked of the server by signing in with it (in whichever
+  /// scheme the account uses). Sign-in never carries the session token, so a wrong guess is not mistaken for a
+  /// revoked session, and guesses are rate limited there like any failed sign-in (a 429 is thrown, not swallowed).
   func passwordIsRight(_ password: String) async throws -> Bool {
+    guard let proof = try await prove(password) else { return false }
+    proof.wipe()
+    return true
+  }
+
+  /// The credential the server accepted for `password`, or nil when it refused it. The caller wipes it.
+  private func prove(_ password: String) async throws -> Credential? {
     guard let user = state.user else { throw AppError.unauthorized("You are signed out.") }
     do {
-      let _: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: user.username, password: password))
-      return true
+      return try await signIn(user.username, password: password).1
     } catch let e as AppError where e.isUnauthorized {
-      return false
+      return nil
     }
   }
 
   /// Deletes the signed-in account and everything the person wrote or received through it (API PR #104).
-  /// It cannot be undone. The server wants the current password; a wrong one is a 403 and deletes nothing.
+  /// It cannot be undone. The server wants the current password (split: the auth key); a wrong one is a 403
+  /// and deletes nothing. The phone proves the password first, by signing in with it, and sends nothing if
+  /// that fails: found on 20 September 2026, when a development server from before PR #104 ignored the field
+  /// and deleted an account given a wrong password. A deployed API can lag an app release the same way.
   /// On success every token of the account is dead, so this phone forgets the session and the keys at once.
   /// Use `AccountDeletion`, which also clears what else this phone holds for the account.
   func deleteAccount(password: String) async throws -> DeletedUserDTO {
     guard let user = state.user else { throw AppError.unauthorized("You are signed out.") }
-    let envelope: APIEnvelope<DeletedUserDTO> = try await api.send("DELETE", "auth/user", body: DeleteUserRequest(id: user.id, password: password))
+    guard let proof = try await prove(password) else { throw AppError.forbidden("That is not this account's password. Nothing was deleted.") }
+    proof.wipe() // only what the server checks is needed here
+    let envelope: APIEnvelope<DeletedUserDTO> = try await api.send("DELETE", "auth/user", body: DeleteUserRequest(id: user.id, password: proof.serverPassword))
     forgetLocally()
     return envelope.data ?? DeletedUserDTO(letters: nil, replies: nil, attachments: nil, threads: nil)
   }
 
   private func wrapped(_ keyPair: Sodium.KeyPair, under password: String) async throws -> WrappedKey {
     do { return try await engine.wrapForPassword(keyPair, password: password) } catch { throw AppError.unexpected("The key could not be wrapped: \(error)") }
+  }
+
+  private func wrappedSplit(_ keyPair: Sodium.KeyPair, under password: String) async throws -> (wrapped: WrappedKey, authKey: String) {
+    do { return try await engine.wrapForSplitPassword(keyPair, password: password) } catch { throw AppError.unexpected("The key could not be wrapped: \(error)") }
   }
 }
 

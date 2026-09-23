@@ -70,12 +70,9 @@ public final class AccountDeletion {
     guard let user = sessions.state.user else { throw AppError.unauthorized("You are signed out.") }
     outbox.reload()
     let unsent = outbox.items.count
-    // The server checks the password (API PR #104), but only a server that has PR #104. Against an older
-    // build the field is ignored and the account is deleted on the token alone: found on 20 September 2026,
-    // when a development server started before the merge deleted an account given a wrong password. A
-    // deployed API can lag an app release the same way, so the phone does not take the server's check on
-    // trust: it proves the password first, by signing in with it, and sends nothing if that fails.
-    guard try await sessions.passwordIsRight(password) else { throw Self.wrongPassword }
+    // The phone proves the password first, by signing in with it (in whichever scheme the account uses), and
+    // sends nothing if that fails; `deleteAccount` says why. Both a wrong password and the server's own 403
+    // read the same here: nothing happened.
     let gone: DeletedUserDTO
     do {
       gone = try await sessions.deleteAccount(password: password)

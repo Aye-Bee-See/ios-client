@@ -402,4 +402,91 @@ final class LiveServerTests: XCTestCase {
     let listed = try await member.group.writers()
     XCTAssertEqual(try XCTUnwrap(listed.first { $0.id == writer.id }?.tokenExpiresAt).timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 1)
   }
+
+  /// What the server says an account's scheme is, asked as the app asks, without a token.
+  private func scheme(_ base: String, _ username: String) async throws -> String? {
+    var comps = try XCTUnwrap(URLComponents(string: base.hasSuffix("/") ? base + "auth/login-params" : base + "/auth/login-params"))
+    comps.queryItems = [URLQueryItem(name: "username", value: username)]
+    let (data, _) = try await URLSession.shared.data(from: try XCTUnwrap(comps.url))
+    return ((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["data"] as? [String: Any])?["scheme"] as? String
+  }
+
+  /// The split sign-in scheme (API PR #114) on an end-to-end server with REQUIRE_SPLIT_AUTH on: what production
+  /// will be from the first push. An account from before (member1, made by an admin before the flag) signs in by
+  /// the fallback and moves to split at its password change; a newcomer claims split and everything after that
+  /// is one derivation per sign-in. The password is checked against every request's shape only in the unit
+  /// tests (the recorder); here the proof is that a real API accepts what the phone sends, and that letters
+  /// sealed under keys wrapped this way open on both sides.
+  ///
+  ///     # an end-to-end throwaway API: ENCRYPTION_MODE=e2e, seeded, dev-seed.py run, then restarted with REQUIRE_SPLIT_AUTH=true
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerEndToEndSplitAuth
+  func testThrowawayServerEndToEndSplitAuth() async throws {
+    let member = try container("ABC_LIVE_THROWAWAY"), newcomer = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test changes passwords and deletes an account") }
+    await member.modes.refresh(); await newcomer.modes.refresh()
+    try XCTSkipIf(member.modes.mode != .e2e, "written for an end-to-end server")
+    let memberScheme = try await scheme(base, "member1")
+    XCTAssertEqual(memberScheme, "split", "under the flag the handshake calls every name split")
+
+    // 1. An account from before: the auth key is refused, the password follows once, keys are made at that sign-in.
+    try await member.sessions.login(username: "member1", password: "password1")
+    XCTAssertFalse(member.schemes.isKnownSplit("member1"), "a fallback sign-in is not a split one")
+    let memberKey = try Data(XCTUnwrap(member.vault.keyPair(for: try XCTUnwrap(member.sessions.state.user?.id))).privateKey)
+    member.sessions.recoveryCodeSaved()
+    let setUp = await member.group.setUpKeys()
+    print("live #114: member1 signed in by the fallback; group key made: \(setUp.madeGroupKey), writers given keys: \(setUp.writersGivenKeys)")
+    XCTAssertTrue(member.group.keyState.isReady)
+
+    // 2. The password change moves it to split: from here one derivation, and the same key.
+    try await member.sessions.changePassword(current: "password1", new: "Bicycle tomato harvest 9")
+    XCTAssertTrue(member.schemes.isKnownSplit("member1"))
+    try await member.sessions.logout()
+    try await member.sessions.login(username: "member1", password: "Bicycle tomato harvest 9")
+    XCTAssertEqual(member.vault.keyPair(for: try XCTUnwrap(member.sessions.state.user?.id))?.privateKey, memberKey, "the same key, now under the wrap key")
+    let groupState = await member.group.refreshKeyState()
+    XCTAssertTrue(groupState.isReady, "and the group key still opens with it")
+    await assertThrowsAppError(try await member.sessions.login(username: "member1", password: "password1")) { XCTAssertTrue($0.isUnauthorized, "the old password is gone, and there is no fallback for a known split name") }
+    try await member.sessions.login(username: "member1", password: "Bicycle tomato harvest 9")
+
+    // 3. A newcomer claims: split, with the group-made key re-wrapped under the wrap key.
+    // On an end-to-end server a managed writer's keypair is made by a member's phone, so the seed adds none: add one here.
+    let writer = try await member.group.addWriter(name: "Alex (iOS split test)", email: nil, note: nil)
+    let issued = try await member.group.issueToken(writerId: writer.id)
+    _ = try await newcomer.sessions.claimInfo(token: issued.token)
+    let username = "alexios\(Int(Date().timeIntervalSince1970) % 100_000)"
+    try await newcomer.sessions.claim(token: issued.token, username: username, password: "Lantern river quiet map 4", email: nil)
+    let claimedScheme = try await scheme(base, username)
+    XCTAssertEqual(claimedScheme, "split")
+    XCTAssertTrue(newcomer.schemes.isKnownSplit(username))
+    let newcomerId = try XCTUnwrap(newcomer.sessions.state.user?.id)
+    let newcomerKey = try Data(XCTUnwrap(newcomer.vault.keyPair(for: newcomerId)).privateKey)
+    let recoveryCode = try XCTUnwrap(newcomer.sessions.pendingRecoveryCode)
+    newcomer.sessions.recoveryCodeSaved()
+
+    // 4. Letters sealed under keys wrapped this way open on both sides.
+    // As the compose screen does in end-to-end mode: the relay group is resolved first, so the letter is sealed to it.
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    let sent = try await newcomer.letters.send(NewLetter(prisonerId: 1, body: "Sealed after a split claim.", relayNote: nil, relayChapter: groupId, groupRelaysFacility: true))
+    let queue = try await member.group.queue(groupId: groupId, status: .queued, page: 1, pageSize: 100)
+    XCTAssertEqual(queue.items.first { $0.id == sent.id }?.letter.body, "Sealed after a split claim.", "the group reads it with the group key")
+    try await newcomer.sessions.logout()
+    try await newcomer.sessions.login(username: username, password: "Lantern river quiet map 4")
+    XCTAssertEqual(newcomer.vault.keyPair(for: newcomerId)?.privateKey, newcomerKey)
+    let reread = try await newcomer.letters.letter(messageId: sent.id)
+    XCTAssertEqual(reread.body, "Sealed after a split claim.", "and the writer reads it again after a one-derivation sign-in")
+
+    // 5. Recovery sets a split password too, and keeps the key.
+    try await newcomer.sessions.logout()
+    try await newcomer.sessions.recover(username: username, recoveryCode: recoveryCode, newPassword: "Harbour candle seven wolves")
+    XCTAssertEqual(newcomer.vault.keyPair(for: newcomerId)?.privateKey, newcomerKey)
+    let recoveredScheme = try await scheme(base, username)
+    XCTAssertEqual(recoveredScheme, "split")
+
+    // 6. Deleting proves the auth key, not the password: a wrong one deletes nothing.
+    await assertThrowsAppError(try await newcomer.accountDeletion.deleteMyAccount(password: "Lantern river quiet map 4")) { XCTAssertEqual($0, AccountDeletion.wrongPassword) }
+    let gone = try await newcomer.accountDeletion.deleteMyAccount(password: "Harbour candle seven wolves")
+    print("live #114: the newcomer's account deleted: \(gone)")
+    XCTAssertFalse(newcomer.sessions.state.isSignedIn)
+  }
 }

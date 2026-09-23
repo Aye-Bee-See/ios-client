@@ -390,6 +390,28 @@ struct PasswordField: View {
   }
 }
 
+/// Four bars and a word. The bars are decoration for the word (VoiceOver gets the sentence only), and the
+/// word is advice: nothing stops a person choosing a weak password beyond the length rule the network decided on.
+struct PasswordStrengthMeter: View {
+  let password: String
+
+  var body: some View {
+    if !password.isEmpty {
+      let strength = PasswordRules.strength(password)
+      let colour: Color = strength == .weak ? Theme.red : strength == .fair ? Theme.inkMuted : Theme.ink
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 4) {
+          ForEach(0..<4, id: \.self) { i in
+            RoundedRectangle(cornerRadius: 2).fill(i < strength.bars ? colour : Theme.rule).frame(height: 4)
+          }
+        }
+        .accessibilityHidden(true)
+        Muted("Strength: \(strength.label). A rough guess; nothing here can know whether a password has leaked.", font: Theme.label)
+      }
+    }
+  }
+}
+
 /// A claim token or recovery code, large and monospaced, grouped in fours for reading aloud.
 struct SecretCodeDisplay: View {
   let pretty: String

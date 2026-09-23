@@ -9,6 +9,16 @@ struct LoginRequest: Encodable {
   let password: String
 }
 
+/// Step one of signing in (API PR #114): which scheme the account uses and, for the split scheme, the salt and
+/// recipe the device derives its keys with. Public. For an unknown name the answer is a made-up but stable salt,
+/// so it never says whether an account exists. Absent from an older API (404): then everything is `plain`.
+struct LoginParamsDTO: Decodable {
+  let scheme: String?
+  let kdfSalt: String?
+  let kdfParams: JSONValue?
+  var isSplit: Bool { scheme == "split" && kdfSalt != nil && kdfParams != nil && kdfParams != .null }
+}
+
 struct LogoutRequest: Encodable {
   let everywhere: Bool
 }
@@ -85,8 +95,10 @@ struct ClaimInfoDTO: Decodable {
 struct ClaimRequest: Encodable {
   let token: String
   let username: String
-  let password: String
+  var password: String
   let email: String?
+  /// `"split"`: `password` is the auth key, derived with `kdfSalt`/`kdfParams` (API PR #114). Absent means plain.
+  var authScheme: String?
   // End-to-end mode: the same private key, re-wrapped under the new password and a new recovery code.
   var wrappedPrivateKey: String?
   var kdfSalt: String?
@@ -99,6 +111,8 @@ struct ClaimRequest: Encodable {
 struct UpdateUserRequest: Encodable {
   let id: Int
   var password: String?
+  /// `"split"`: `password` is the auth key, derived with `kdfSalt`/`kdfParams` (API PR #114). Absent means plain.
+  var authScheme: String?
   // End-to-end mode: a password change must carry the private key re-wrapped under the new password.
   var wrappedPrivateKey: String?
   var kdfSalt: String?
@@ -153,6 +167,8 @@ struct RecoverFinishRequest: Encodable {
   let wrappedPrivateKey: String
   let kdfSalt: String
   let kdfParams: KdfParams
+  /// `"split"`: `password` is the auth key, derived with `kdfSalt`/`kdfParams` (API PR #114). Absent means plain.
+  var authScheme: String?
 }
 
 struct HealthDTO: Decodable {
