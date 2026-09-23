@@ -55,6 +55,7 @@ final class LoginModel {
     switch error {
     case .unauthorized: return "Incorrect username or password."
     case .rateLimited: return error.userMessage ?? "Too many sign-in attempts. Try again later."
+    case let e where e.isSchemeRefused: return "The server would not accept this password in the form the app sends it. The app may need updating."
     case .network: return "Can't reach the server. Check your connection and try again."
     default: return error.userMessage ?? "Something went wrong. Please try again."
     }

@@ -16,6 +16,17 @@ final class SessionFlowTests: XCTestCase {
     app = TestApp { fake.handle($0) }
   }
 
+  /// Opens the stored key the way the account signs in now: a password set since API PR #114 is split, so the
+  /// key is under the wrap key derived beside the auth key, with the account's salt.
+  private func reopen(_ account: FakeAPI.Account, password: String) throws -> Data {
+    let k = account.keys
+    XCTAssertEqual(account.authScheme, "split", "a password set where the server knows the scheme is split")
+    XCTAssertEqual(account.password.count, 44, "the server holds an auth key, never the password"); XCTAssertNotEqual(account.password, password)
+    let keys = try SplitAuth.derive(password: password, salt: Sodium.fromBase64(k["kdfSalt"] as! String))
+    defer { keys.wipe() }
+    return try AccountKeys.unlockWithWrapKey(publicKey: k["publicKey"] as! String, wrapped: k["wrappedPrivateKey"] as! String, wrapKey: keys.wrapKey).privateKey
+  }
+
   func testKeysAreMadeAtSignInWhileTheServerIsStillInServerMode() async throws {
     // API PR #95: the move to end-to-end does not wait for anyone. Keys appear as people sign in.
     fake.mode = "server"
@@ -48,9 +59,7 @@ final class SessionFlowTests: XCTestCase {
     let key = try XCTUnwrap(app.container.vault.keyPair(for: 4)).privateKey
     app.container.vault.clear() // a restored phone: signed in, no key here
     try await sessions.changePassword(current: "pässword1", new: "new-password")
-    let k = fake.accounts[0].keys
-    let reopened = try AccountKeys.unlockWithPassword(publicKey: k["publicKey"] as! String, wrapped: k["wrappedPrivateKey"] as! String, password: "new-password", salt: k["kdfSalt"] as! String, params: .standard)
-    XCTAssertEqual(reopened.privateKey, key, "otherwise the key would stay under the old password and be lost at the switch")
+    XCTAssertEqual(try reopen(fake.accounts[0], password: "new-password"), key, "otherwise the key would stay under the old password and be lost at the switch")
   }
 
   func testAnAdminNeverGetsKeys() async throws {
@@ -131,9 +140,13 @@ final class SessionFlowTests: XCTestCase {
     let newToken = try XCTUnwrap(sessions.state.session?.token)
     XCTAssertNotEqual(newToken, oldToken)
     XCTAssertNil(fake.tokens[oldToken], "every older session is ended")
-    let k = fake.accounts[0].keys
-    let reopened = try AccountKeys.unlockWithPassword(publicKey: k["publicKey"] as! String, wrapped: k["wrappedPrivateKey"] as! String, password: "new-password", salt: k["kdfSalt"] as! String, params: .standard)
-    XCTAssertEqual(reopened.privateKey, key)
+    XCTAssertEqual(try reopen(fake.accounts[0], password: "new-password"), key)
+    // From here the account is split: signing in again is the handshake, the derivation and one request, and the password is not in it.
+    try await sessions.logout()
+    try await sessions.login(username: "user1", password: "new-password")
+    let last = try XCTUnwrap(app.requests(to: "/auth/login").last)
+    XCTAssertEqual((last.json["password"] as? String)?.count, 44); XCTAssertFalse(last.bodyText.contains("new-password"))
+    XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, key)
   }
 
   func testRecoveryWithTheCodeProvesPossessionSetsANewPasswordAndKeepsTheKey() async throws {
@@ -149,8 +162,9 @@ final class SessionFlowTests: XCTestCase {
     try await sessions.recover(username: "user1", recoveryCode: SecretCodes.pretty(code).lowercased(), newPassword: "second-password")
     XCTAssertEqual(sessions.state.user?.id, 4)
     XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, key)
-    XCTAssertEqual(fake.accounts[0].password, "second-password")
-    XCTAssertFalse(try XCTUnwrap(app.requests(to: "/auth/recover", method: "POST").first).bodyText.contains(code))
+    XCTAssertEqual(try reopen(fake.accounts[0], password: "second-password"), key)
+    let finish = try XCTUnwrap(app.requests(to: "/auth/recover", method: "POST").first)
+    XCTAssertFalse(finish.bodyText.contains(code)); XCTAssertFalse(finish.bodyText.contains("second-password")); XCTAssertEqual(finish.json["authScheme"] as? String, "split")
   }
 
   func testClaimingOpensTheGroupMadeKeyWithTheTokenAndRewrapsTheVerySameKey() async throws {

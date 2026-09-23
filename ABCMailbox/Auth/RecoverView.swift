@@ -17,7 +17,7 @@ final class RecoverModel {
   init(app: AppModel) { self.app = app }
 
   var matches: Bool { password == confirm }
-  var canSubmit: Bool { !busy && !username.trimmingCharacters(in: .whitespaces).isEmpty && !code.trimmingCharacters(in: .whitespaces).isEmpty && password.count >= 7 && matches }
+  var canSubmit: Bool { !busy && !username.trimmingCharacters(in: .whitespaces).isEmpty && !code.trimmingCharacters(in: .whitespaces).isEmpty && PasswordRules.isLongEnough(password) && matches }
 
   func edited() { error = nil }
 
@@ -87,7 +87,8 @@ struct RecoverView: View {
         .textInputAutocapitalization(.characters).autocorrectionDisabled().keyboardType(.asciiCapable)
         .accessibilityIdentifier("recover-code")
     }
-    PasswordField(label: "New password", text: $model.password, show: $model.show, hint: "At least 7 characters", isNew: true)
+    PasswordField(label: "New password", text: $model.password, show: $model.show, hint: PasswordRules.lengthHint, isNew: true)
+    PasswordStrengthMeter(password: model.password)
       .accessibilityIdentifier("recover-password")
     PasswordField(label: "Confirm new password", text: $model.confirm, show: $model.show, isError: !model.confirm.isEmpty && !model.matches, isNew: true, showsToggle: false)
       .accessibilityIdentifier("recover-confirm")

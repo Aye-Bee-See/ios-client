@@ -19,6 +19,9 @@ final class FakeAPI: @unchecked Sendable {
     var name: String?
     /// The group's shared anonymous writer: not a person, and never has keys.
     var anonymousFor: Int?
+    /// API PR #114. For a split account `password` holds the auth key (44 characters of base64) and `keys` the
+    /// `kdfSalt`/`kdfParams` the auth key was derived with, as on the server, where they are the same columns.
+    var authScheme = "plain"
   }
 
   private let lock = NSLock()
@@ -48,6 +51,12 @@ final class FakeAPI: @unchecked Sendable {
   var lettersCounted: [Int: Int] = [:]
   /// An API from before PR #112 sends none of the counting fields.
   var predatesGroupNumbers = false
+  /// An API from before PR #114: no handshake (404), and every password is the password.
+  var predatesSplitAuth = false
+  /// REQUIRE_SPLIT_AUTH: the handshake calls every name split, and no new plain account can be made.
+  var requireSplitAuth = false
+  /// How many times the handshake was asked, per username (a test can check nothing else was tried).
+  var handshakes: [String: Int] = [:]
   /// The phone has no connection: every request fails before it leaves.
   var noSignal = false
   /// One shot: the next request matching this is carried out, and then its answer is lost on the way
@@ -123,6 +132,24 @@ final class FakeAPI: @unchecked Sendable {
     }
   }
 
+  private let defaultKdfParams: [String: Any] = ["kdf": "argon2id", "alg": 2, "opslimit": 2, "memlimit": 67_108_864]
+
+  /// API PR #114, wherever a password is set: `authScheme: "split"` needs a salt and a recipe and an auth-key-shaped
+  /// password, and takes; a split account never goes back to plain (409); under the flag no new plain account is made.
+  private func scheme(_ body: [String: Any], for i: Int, creating: Bool) -> Stubbed? {
+    let requested = body["authScheme"] as? String ?? "plain"
+    guard ["plain", "split"].contains(requested) else { return .error(400, extra: ["errors": ["authScheme must be one of plain, split."]]) }
+    if requested == "split" {
+      guard body["kdfSalt"] != nil, body["kdfParams"] != nil else { return .error(400, extra: ["errors": ["authScheme \"split\" needs kdfSalt and kdfParams (the auth key is derived from them, as the wrap key is)."]]) }
+      guard SplitAuth.looksLikeAuthKey(body["password"] as? String ?? "") else { return .error(400, extra: ["errors": ["A split password is the auth key: 44 characters of base64."]]) }
+      accounts[i].authScheme = "split"
+      return nil
+    }
+    if accounts[i].authScheme == "split", !creating { return .error(409, info: "Error updating user.", extra: ["name": "AuthSchemeError", "error": "This account signs in without sending its password; it cannot go back."]) }
+    if requireSplitAuth { return .error(400, extra: ["errors": ["This server no longer creates accounts that send their password (REQUIRE_SPLIT_AUTH)."]]) }
+    return nil
+  }
+
   private func prisonerJSON(_ pid: Int) -> [String: Any] {
     ["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]]
   }
@@ -170,6 +197,18 @@ final class FakeAPI: @unchecked Sendable {
     case ("GET", "/health"):
       return .json(["status": "ok", "encryptionMode": mode])
 
+    case ("GET", "/auth/login-params"):
+      // Public, and never says whether an account exists: an unknown or plain name gets a made-up but stable salt.
+      if predatesSplitAuth { return .error(404, info: "Cannot GET /auth/login-params") }
+      if r.headers["Authorization"] != nil { return .error(400, info: "the handshake must not carry a token (the test's rule, so that a signed-out check is the same as a signed-in one)") }
+      let name = r.query["username"] ?? ""
+      handshakes[name, default: 0] += 1
+      let a = accounts.first { $0.username == name }
+      let split = a?.authScheme == "split" && a?.keys["kdfSalt"] != nil
+      let plain = a != nil && !split && !requireSplitAuth
+      let fakeSalt = Sodium.toBase64(Data(SecretCodes.hashHex(name).utf8.prefix(16)))
+      return .data(["scheme": plain ? "plain" : "split", "kdfSalt": split ? a!.keys["kdfSalt"]! : fakeSalt, "kdfParams": split ? a!.keys["kdfParams"]! : defaultKdfParams])
+
     case ("POST", "/auth/login"):
       guard let a = accounts.first(where: { $0.username == body["username"] as? String && $0.password == body["password"] as? String }) else { return .error(401, info: "Incorrect username or password.") }
       var data: [String: Any] = ["user": userJSON(a), "token": issue(a)]
@@ -204,6 +243,7 @@ final class FakeAPI: @unchecked Sendable {
     case ("PUT", "/auth/user"):
       guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
       if let password = body["password"] as? String {
+        if let refused = scheme(body, for: i, creating: false) { return refused }
         accounts[i].password = password
         for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }
         tokens = tokens.filter { $0.value != target }
@@ -250,6 +290,7 @@ final class FakeAPI: @unchecked Sendable {
     case ("POST", "/auth/recover"):
       guard let username = body["username"] as? String, let i = accounts.firstIndex(where: { $0.username == username }), challenges[username] == body["challenge"] as? String else { return .error(401, info: "Recovery refused.") }
       challenges[username] = nil
+      if let refused = scheme(body, for: i, creating: false) { return refused }
       accounts[i].password = body["password"] as! String
       for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams"] { accounts[i].keys[k] = body[k] }
       return .data([:])
@@ -265,6 +306,7 @@ final class FakeAPI: @unchecked Sendable {
     case ("POST", "/auth/claim"):
       let hash = SecretCodes.hashHex(body["token"] as? String ?? "")
       guard let i = accounts.firstIndex(where: { $0.claim?["tokenHash"] as? String == hash }) else { return .error(410, info: "Used or expired.") }
+      if let refused = scheme(body, for: i, creating: true) { return refused }
       accounts[i].username = body["username"] as! String
       accounts[i].password = body["password"] as! String
       for k in ["wrappedPrivateKey", "kdfSalt", "kdfParams", "recoveryWrappedPrivateKey", "recoverySalt", "recoveryKdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }

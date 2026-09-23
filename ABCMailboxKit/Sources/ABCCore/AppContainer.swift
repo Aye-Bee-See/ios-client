@@ -8,6 +8,8 @@ public final class AppContainer {
   public let sessions: SessionRepository
   public let modes: EncryptionModeRepository
   public let vault: KeyVault
+  /// Which usernames this phone has signed in to without sending the password (API PR #114).
+  public let schemes: SchemeMemory
   public let keyring: GroupKeyring
   public let directory: DirectoryRepository
   public let offline: OfflineDirectory
@@ -50,7 +52,8 @@ public final class AppContainer {
 
     modes = EncryptionModeRepository(api: api)
     vault = KeyVault(store: secrets)
-    sessions = SessionRepository(secrets: secrets, api: api, cache: cache, modes: modes, engine: engine, vault: vault)
+    schemes = SchemeMemory(defaults: defaults)
+    sessions = SessionRepository(secrets: secrets, api: api, cache: cache, modes: modes, engine: engine, vault: vault, schemes: schemes)
     keyring = GroupKeyring(modes: modes, sessions: sessions, vault: vault, api: api)
     let codec = LetterCodec(modes: modes, vault: vault, sessions: sessions, api: api, keyring: keyring)
     self.files = files

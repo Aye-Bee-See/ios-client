@@ -25,6 +25,7 @@ public enum Sodium {
   public static let keyBytes = 32
   public static let nonceBytes = 24
   public static let saltBytes = 16
+  public static let kdfContextBytes = 8
 
   /// Default Argon2id cost: libsodium's "interactive" tier, fast enough for a phone.
   public static let opslimitInteractive: UInt64 = 2
@@ -36,6 +37,7 @@ public enum Sodium {
     precondition(keyBytes == crypto_aead_xchacha20poly1305_ietf_keybytes())
     precondition(nonceBytes == crypto_aead_xchacha20poly1305_ietf_npubbytes())
     precondition(saltBytes == crypto_pwhash_saltbytes())
+    precondition(kdfContextBytes == crypto_kdf_contextbytes() && keyBytes == crypto_kdf_keybytes())
     precondition(opslimitInteractive == UInt64(crypto_pwhash_opslimit_interactive()))
     precondition(memlimitInteractive == crypto_pwhash_memlimit_interactive())
     precondition(algArgon2id13 == crypto_pwhash_alg_argon2id13())
@@ -140,6 +142,19 @@ public enum Sodium {
     let rc = crypto_aead_xchacha20poly1305_ietf_decrypt(&out, &outLength, nil, c, UInt64(c.count), nil, 0, [UInt8](nonce), [UInt8](key))
     guard rc == 0 else { throw SodiumError.cannotOpen }
     return Data(out.prefix(Int(outLength)))
+  }
+
+  /// `crypto_kdf_derive_from_key`: a subkey from a 32-byte master key, named by a number and an eight-character
+  /// context. Deterministic, and cheap: the slow part (Argon2id) has already been paid for the master key. Two
+  /// subkeys of one master are unrelated to each other, which is the whole point of the split sign-in scheme.
+  public static func deriveSubkey(masterKey: Data, id: UInt64, context: String) throws -> Data {
+    initialize()
+    guard masterKey.count == keyBytes else { throw SodiumError.invalidLength("master key must be \(keyBytes) bytes") }
+    let ctx = context.utf8.map { CChar(bitPattern: $0) }
+    guard ctx.count == kdfContextBytes, context.allSatisfy(\.isASCII) else { throw SodiumError.invalidLength("context must be exactly \(kdfContextBytes) ASCII characters") }
+    var out = [UInt8](repeating: 0, count: keyBytes)
+    guard crypto_kdf_derive_from_key(&out, keyBytes, id, ctx, [UInt8](masterKey)) == 0 else { throw SodiumError.operationFailed("crypto_kdf_derive_from_key") }
+    return Data(out)
   }
 
   /// Argon2id, 32 bytes out. The caller stores `salt` and the three cost values as `kdfParams`.

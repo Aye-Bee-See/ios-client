@@ -62,6 +62,9 @@ public enum AppError: Error, Equatable, Sendable {
   /// The same Idempotency-Key is being processed right now (a retry racing the original, API PR #97):
   /// wait a second and ask again. Not to be confused with a group's key rotation, which is also a 409.
   public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError") = self { return true } else { return false } }
+  /// The server would not take the password in the form it was sent: a plain password for a split account, or the
+  /// other way round (API PR #114, `409 AuthSchemeError`).
+  public var isSchemeRefused: Bool { if case .conflict(_, name: "AuthSchemeError") = self { return true } else { return false } }
   /// A group rotated its key between our reading it and our using it.
   public var isKeyRotated: Bool { if case .conflict(_, name: "KeyVersionError") = self { return true } else { return false } }
   /// A status move lost a race: another volunteer, or a double tap, got there first, or the letter was held or
