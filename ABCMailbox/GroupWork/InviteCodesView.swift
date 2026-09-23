@@ -11,7 +11,11 @@ final class InviteCodesModel {
   private(set) var quota: Loadable<InviteCodeQuota> = .loading
   /// The batch just issued: its codes exist on this screen and nowhere else.
   private(set) var issued: IssuedInviteCodes?
-  private(set) var groupName = "Your group"
+  /// The chapter's name, which goes on every slip: nil until the directory has answered, and issuing waits for it.
+  private(set) var groupName: String?
+  /// The slips were printed or shared: they exist on paper now, and forgetting them is right. Until then, leaving
+  /// them behind would leave live codes nobody can show again, so the screen asks whether to cancel the batch.
+  private(set) var handedOff = false
   var count = 10
   var label = ""
   private(set) var busy = false
@@ -22,10 +26,14 @@ final class InviteCodesModel {
   @ObservationIgnored private let app: AppModel
   init(app: AppModel) { self.app = app }
 
-  var canIssue: Bool { !busy && (1...50).contains(count) && label.count <= 80 }
+  var canIssue: Bool { !busy && groupName != nil && (1...50).contains(count) && label.count <= 80 }
 
   func load() async {
-    if let id = app.user?.chapterId, let group = try? await app.container.directory.group(id: id) { groupName = group.name }
+    if groupName == nil, let id = app.user?.chapterId {
+      do { groupName = try await app.container.directory.group(id: id).name } catch {
+        self.error = "Could not read your group's name from the directory, which goes on every slip. Check the connection and pull to try again."
+      }
+    }
     let fresh: Loadable<InviteCodeQuota> = await .from { try await self.app.container.group.inviteCodes() }
     if fresh.value != nil || quota.value == nil { quota = fresh }
   }
@@ -34,9 +42,11 @@ final class InviteCodesModel {
     guard canIssue else { return }
     busy = true; error = nil
     defer { busy = false }
+    guard let groupName else { return }
     do {
       let batch = try await app.container.group.issueInviteCodes(count: count, label: label, days: nil)
       issued = batch
+      handedOff = false
       pdf = try? InviteSlips.pdf(batch, groupName: groupName)
       label = ""
       await load()
@@ -45,27 +55,37 @@ final class InviteCodesModel {
     }
   }
 
-  func cancel(_ batch: InviteCodeBatch?) async {
+  /// Cancels the unused codes of one batch, or of every batch when `batchId` is nil.
+  func cancel(batchId: String?) async {
     busy = true; error = nil
     defer { busy = false }
     do {
-      let n = try await app.container.group.cancelInviteCodes(batch: batch?.id)
+      let n = try await app.container.group.cancelInviteCodes(batch: batchId)
       app.show(n == 0 ? "Nothing to cancel." : "\(Format.plural(n, "code")) cancelled. Accounts already made with this batch stay.")
-      if batch == nil || batch?.id == issued?.batch { issued = nil; pdf = nil }
+      if batchId == nil || batchId == issued?.batch { issued = nil; pdf = nil }
       await load()
     } catch {
       self.error = AppError.from(error).userMessage ?? "Could not cancel the codes."
     }
   }
 
-  /// Leaving the screen is the end of the codes: they cannot be shown again.
+  func noteHandedOff() { handedOff = true }
+
+  /// The end of the codes on this phone: they cannot be shown again.
   func forgetIssued() { issued = nil; if let pdf { try? FileManager.default.removeItem(at: pdf) }; pdf = nil }
+
+  /// The batch was neither printed nor shared: cancel it, so no live code is left that nobody can show.
+  func cancelUnshown() async {
+    guard let issued else { return }
+    await cancel(batchId: issued.batch)
+  }
 }
 
 struct InviteCodesView: View {
   @State private var model: InviteCodesModel
   @State private var confirmCancel: InviteCodeBatch?
   @State private var confirmCancelAll = false
+  @State private var confirmDone = false
   private let app: AppModel
 
   init(app: AppModel) {
@@ -83,15 +103,23 @@ struct InviteCodesView: View {
     .navigationTitle("Invite codes")
     .navigationBarTitleDisplayMode(.inline)
     .task { await model.load() }
+    .refreshable { await model.load() }
     .onDisappear { model.forgetIssued() }
+    .confirmationDialog("These slips were not printed or shared", isPresented: $confirmDone, titleVisibility: .visible) {
+      Button("Cancel this batch", role: .destructive) { Task { await model.cancelUnshown(); model.forgetIssued() } }
+      Button("Keep the codes") { model.forgetIssued() }
+      Button("Go back", role: .cancel) {}
+    } message: {
+      Text("Put away, they cannot be shown again. Kept, they stay live and count against your quota until they expire or you cancel them from the list below.")
+    }
     .confirmationDialog(confirmCancel.map { "Cancel the unused codes of \"\($0.label ?? "this batch")\"?" } ?? "", isPresented: Binding(get: { confirmCancel != nil }, set: { if !$0 { confirmCancel = nil } }), titleVisibility: .visible) {
-      Button("Cancel them", role: .destructive) { if let b = confirmCancel { Task { await model.cancel(b) } } }
+      Button("Cancel them", role: .destructive) { if let b = confirmCancel { Task { await model.cancel(batchId: b.id) } } }
       Button("Keep them", role: .cancel) {}
     } message: {
       Text("Slips from this batch that were not used stop working. Accounts already made with them stay.")
     }
     .confirmationDialog("Cancel every unused code?", isPresented: $confirmCancelAll, titleVisibility: .visible) {
-      Button("Cancel them all", role: .destructive) { Task { await model.cancel(nil) } }
+      Button("Cancel them all", role: .destructive) { Task { await model.cancel(batchId: nil) } }
       Button("Keep them", role: .cancel) {}
     } message: {
       Text("Every slip not yet used stops working. Accounts already made with them stay.")
@@ -116,8 +144,8 @@ struct InviteCodesView: View {
     if let expires = issued.expiresAt { Text("Use by \(Format.long(expires))").font(Theme.titleMedium) }
     HStack(spacing: 16) {
       if let pdf = model.pdf {
-        Button("Print") { InviteSlips.print(pdf) }.buttonStyle(.primaryCompact).accessibilityIdentifier("printSlips")
-        ShareLink(item: pdf) { Text("Share as PDF") }.buttonStyle(.outline)
+        Button("Print") { model.noteHandedOff(); InviteSlips.print(pdf) }.buttonStyle(.primaryCompact).accessibilityIdentifier("printSlips")
+        ShareLink(item: pdf) { Text("Share as PDF") }.buttonStyle(.outline).simultaneousGesture(TapGesture().onEnded { model.noteHandedOff() })
       }
     }
     ForEach(issued.codes, id: \.self) { code in
@@ -125,13 +153,13 @@ struct InviteCodesView: View {
         if let qr = InviteSlips.qr(InviteCode.webLink(code)) { Image(uiImage: qr).resizable().interpolation(.none).frame(width: 56, height: 56).accessibilityHidden(true) }
         VStack(alignment: .leading, spacing: 2) {
           Text(InviteCode.pretty(code)).font(Theme.mono)
-          Muted(model.groupName, font: Theme.caption)
+          Muted(model.groupName ?? "", font: Theme.caption)
         }
       }
       .padding(10).frame(maxWidth: .infinity, alignment: .leading)
       .background(Theme.paperRaised, in: RoundedRectangle(cornerRadius: 4))
     }
-    Button("Done, put them away") { model.forgetIssued() }.buttonStyle(.outlineWide)
+    Button("Done, put them away") { if model.handedOff { model.forgetIssued() } else { confirmDone = true } }.buttonStyle(.outlineWide)
   }
 
   @ViewBuilder private var quotaSection: some View {
@@ -197,6 +225,12 @@ enum InviteSlips {
     let controller = UIPrintInteractionController.shared
     controller.printInfo = info
     controller.printingItem = pdf
-    controller.present(animated: true)
+    // An iPad shows the panel as a popover, which needs somewhere to point; an iPhone shows a sheet (as PrintLetter does).
+    let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+    if UIDevice.current.userInterfaceIdiom == .pad, let view = window?.rootViewController?.view {
+      controller.present(from: CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1), in: view, animated: true)
+    } else {
+      controller.present(animated: true)
+    }
   }
 }

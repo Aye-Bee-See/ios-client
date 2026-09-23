@@ -246,7 +246,8 @@ private struct WritersTab: View {
         }
         HStack(spacing: 20) {
           Button("Add a writer") { app.push(.addWriter) }.buttonStyle(.primaryCompact)
-          Button("Print invite codes") { app.push(.inviteCodes) }.buttonStyle(.link)
+          // Invite codes are a chapter's: a superadmin has no chapter to issue for.
+          if app.user?.role == Role.chapter, app.user?.chapterId != nil { Button("Print invite codes") { app.push(.inviteCodes) }.buttonStyle(.link) }
         }
         .padding(20)
       }

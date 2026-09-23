@@ -279,6 +279,7 @@ public final class SessionRepository {
     let split = try await splitSupported(userName)
     var request = JoinRequest(code: code, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank)
     var recoveryCode: String?
+    var madeHere: Sodium.KeyPair? // local to this join: a second join in flight must not see it
     if await modes.current() == .e2e {
       let fresh = split ? try await engine.createAccountKeysSplit(password: password) : try await engine.createAccountKeys(password: password)
       let f = fresh.fields
@@ -288,22 +289,19 @@ public final class SessionRepository {
       if let authKey = fresh.authKey { request.password = authKey; request.authScheme = Self.split }
       recoveryCode = fresh.recoveryCode
       // The key goes into the vault only once the account exists, below, under its new id.
-      vaultAfterJoin = fresh.keyPair
+      madeHere = fresh.keyPair
     } else if split {
       let salt = engine.newSalt()
       let keys = try await engine.deriveSplit(password: password, salt: salt, params: KdfParams.standard)
       request.password = keys.authKey; request.authScheme = Self.split; request.kdfSalt = salt; request.kdfParams = .standard
       keys.wipe()
     }
-    defer { vaultAfterJoin = nil }
     let envelope: APIEnvelope<JoinedDTO> = try await api.send("POST", "auth/join", body: request)
-    if let made = envelope.data?.user, let keyPair = vaultAfterJoin { vault.put(userId: made.id, keyPair: keyPair) }
+    if let made = envelope.data?.user, let keyPair = madeHere { vault.put(userId: made.id, keyPair: keyPair) }
     let session = try await login(username: userName, password: password)
     if let recoveryCode { pendingRecoveryCode = recoveryCode }
     return session
   }
-
-  @ObservationIgnored private var vaultAfterJoin: Sodium.KeyPair?
 
   /// Verifies `current` by signing in with it, changes the password, and adopts the fresh token. The new
   /// password goes split wherever the server knows the scheme: this is how an account made before it moves.
