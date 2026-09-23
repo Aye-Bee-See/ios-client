@@ -61,7 +61,7 @@ struct RecoverView: View {
 
       if app.container.modes.mode == .e2e { recoveryForm } else {
         SectionTitle("If the account is your own")
-        Text("Contact a network admin through the group you write with. They can confirm who you are and set a new password for you.").font(Theme.bodyMedium)
+        Text("Contact a superadmin through the group you write with. They can confirm who you are and set a new password for you.").font(Theme.bodyMedium)
       }
 
       SectionTitle("If a support group set up your account and you have not claimed it yet")
@@ -96,6 +96,6 @@ struct RecoverView: View {
     Button(model.busy ? "Recovering…" : "Set new password") { Task { await model.submit() } }
       .buttonStyle(.primary).disabled(!model.canSubmit).accessibilityIdentifier("recover-submit")
       .onChange(of: model.username + model.code + model.password + model.confirm) { model.edited() }
-    Muted("Lost the code too? Then the letters on this account cannot be recovered by anyone. A network admin can help you start a new account.")
+    Muted("Lost the code too? Then the letters on this account cannot be recovered by anyone. A superadmin can help you start a new account.")
   }
 }

@@ -114,18 +114,24 @@ final class AccountDeletionTests: XCTestCase {
     let fake = fake!
     let noor = TestApp { fake.handle($0) }
     try await noor.container.sessions.login(username: "member2", password: "password2")
+    // A superadmin has moved ownership to Noor meanwhile (API PR #115), so Sam is the last holder and not the owner:
+    // the refusal this test is about. (Ownership stands in the way first otherwise; GroupRolesTests covers that.)
+    fake.owners[1] = 10
 
     let preview = await deletion.preview()
-    XCTAssertTrue(preview.endToEnd); XCTAssertTrue(preview.isLastKeyHolder)
+    XCTAssertTrue(preview.endToEnd); XCTAssertTrue(preview.isLastKeyHolder); XCTAssertFalse(preview.isOwnerWithOtherAdmins)
     XCTAssertEqual(preview.membersWhoCouldHoldTheKey, ["Noor"]); XCTAssertNil(preview.conversations, "the group's conversations stay; no number is promised")
-    await assertThrowsAppError(try await deletion.deleteMyAccount(password: "password1")) {
-      XCTAssertTrue($0.isConflict); XCTAssertTrue(try! XCTUnwrap($0.userMessage).contains("last holder"))
-    }
+    await assertThrowsAppError(try await deletion.deleteMyAccount(password: "password1")) { XCTAssertEqual($0, AccountDeletion.lastHolderRefusal, "worded by the code the server sends (API PR #117)") }
     XCTAssertTrue(app.container.sessions.state.isSignedIn)
 
+    // Nobody can hand Noor the key now: she owns it and does not hold it (Android's ask 27). The superadmin moves it back.
+    await assertThrowsAppError(try await app.container.group.handKey(to: 10)) { XCTAssertTrue($0.isForbidden) }
+    fake.owners[1] = 9
     try await app.container.group.handKey(to: 10)
+    let handedRoster = try await app.container.group.roster()
+    try await app.container.group.makeOwner(try XCTUnwrap(handedRoster.members.first { $0.id == 10 }))
     let after = await deletion.preview()
-    XCTAssertFalse(after.isLastKeyHolder)
+    XCTAssertFalse(after.isLastKeyHolder); XCTAssertFalse(after.isOwnerWithOtherAdmins)
     try await deletion.deleteMyAccount(password: "password1")
     XCTAssertNil(fake.accounts.first { $0.id == 9 })
     XCTAssertFalse(app.container.keyring.state.isReady, "the group key went from memory with the session")

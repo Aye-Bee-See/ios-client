@@ -2,6 +2,16 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-23: "Make owner" is offered only to a holder of the key, and refusals are read by their code
+
+**Context.** API PR #115 gives each group one group-owner admin, the only account that hands the key out, takes it back, rotates it, or passes the role on. `PUT /auth/chapter-owner` lets the role go to any group admin of the chapter, holder of the key or not, and answers `holdsGroupKey` so the client knows which. PR #117 puts a `condition` on `AccountDeleteError`.
+
+**Decisions.** Taken with Android's, so a volunteer who uses both sees one behaviour. The page offers "Make owner" only beside a group admin who already holds the key, and the repository refuses for one who does not, before any request. A group admin who does not hold it is handed the key first (the button they get), and then can be made owner. The controls are gated on the members list's `owner`, which the page has in hand, not on the loaded key's `isOwner`; the loaded key carries it for the toast after set-up and for reloading. A deletion refusal is worded by its `condition`; where Android had to match the word "owner" in the sentence (it was built before #117), this app never reads the sentence, and a refusal without a code keeps the server's words.
+
+**Rejected.** Offering the transfer to everyone and warning: after such a transfer nobody can hand the key to the new owner. The old owner has lost the right, and the new one has nothing to seal it from. Only a superadmin moving the role again gets out of it, and there may be no superadmin to hand at a letter night. A hand-and-transfer in one tap: two requests, and the second may fail after the first succeeded; the same trap, one step later.
+
+**Consequences.** Two taps where the API allows one. The waiting notice on the Inbox is shown to the owner only: nobody else can act on it. An API from before the roles names no owner, and there any holder may hand the key, as before.
+
 ## 2026-09-22: the split scheme, with Android's one-time fallback and a memory per phone
 
 **Context.** API PR #114: the password never reaches the server. Decided the same day: every new account is split, `REQUIRE_SPLIT_AUTH` goes on before the first letter night, and production is end-to-end from the first push. Android built it first; where it made a choice, this app makes the same one, so a volunteer who uses both sees one behaviour.

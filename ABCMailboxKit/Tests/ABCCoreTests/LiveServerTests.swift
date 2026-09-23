@@ -489,4 +489,76 @@ final class LiveServerTests: XCTestCase {
     print("live #114: the newcomer's account deleted: \(gone)")
     XCTAssertFalse(newcomer.sessions.state.isSignedIn)
   }
+
+  /// Group roles (API PR #115) on an end-to-end server with the flag on: the first group admin to set up the key
+  /// owns it; a second is waiting with nothing to press; only the owner hands, and passes the role on; the
+  /// server refuses an owner's deletion with a coded condition (PR #117). Needs a second group admin, which
+  /// under the flag an admin cannot create, so the throwaway is seeded with `member2` before the flag goes on.
+  ///
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerGroupRoles
+  func testThrowawayServerGroupRoles() async throws {
+    let sam = try container("ABC_LIVE_THROWAWAY"), noor = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use; this test moves ownership") }
+    await sam.modes.refresh(); await noor.modes.refresh()
+    try XCTSkipIf(sam.modes.mode != .e2e, "written for an end-to-end server")
+
+    try await sam.sessions.login(username: "member1", password: "password1")
+    sam.sessions.recoveryCodeSaved()
+    let setUp = await sam.group.setUpKeys()
+    XCTAssertTrue(setUp.madeGroupKey || sam.group.keyState.isReady)
+    guard case .ready(let samsKey) = sam.group.keyState else { return XCTFail("member1's group key") }
+    XCTAssertTrue(samsKey.isOwner, "the first group admin to set up the key becomes the owner")
+    let samId = try XCTUnwrap(sam.sessions.state.user?.id)
+
+    try await noor.sessions.login(username: "member2", password: "password2")
+    noor.sessions.recoveryCodeSaved()
+    let noorId = try XCTUnwrap(noor.sessions.state.user?.id)
+    var roster = try await sam.group.roster()
+    print("live #115: member1 sees owner \(roster.ownerId ?? -1), waiting \(roster.waiting.map(\.name))")
+    XCTAssertEqual(roster.ownerId, samId); XCTAssertTrue(roster.iAmOwner); XCTAssertTrue(roster.waiting.contains { $0.id == noorId })
+    let hers = try await noor.group.roster()
+    XCTAssertFalse(hers.iAmOwner); XCTAssertEqual(hers.ownerId, samId)
+    await assertThrowsAppError(try await noor.group.handKey(to: samId)) {
+      print("live #115: a group admin who is not the owner is refused: \($0.userMessage ?? "nil")")
+      XCTAssertTrue($0.isForbidden)
+    }
+
+    // Only beside a holder: the phone refuses before asking; after handing, the role passes.
+    let waiting = try XCTUnwrap(roster.members.first { $0.id == noorId })
+    await assertThrowsAppError(try await sam.group.makeOwner(waiting)) { XCTAssertEqual($0, GroupRepository.handKeyFirst) }
+    try await sam.group.handKey(to: noorId)
+    let noorsKey = await noor.group.refreshKeyState()
+    XCTAssertTrue(noorsKey.isReady, "handed: \(noorsKey)")
+    roster = try await sam.group.roster()
+    try await sam.group.makeOwner(try XCTUnwrap(roster.members.first { $0.id == noorId }))
+    roster = try await sam.group.roster()
+    XCTAssertEqual(roster.ownerId, noorId); XCTAssertFalse(roster.iAmOwner)
+    guard case .ready(let samsKeyNow) = sam.group.keyState else { return XCTFail() }
+    XCTAssertFalse(samsKeyNow.isOwner, "the loaded key was reloaded")
+    await assertThrowsAppError(try await sam.group.handKey(to: noorId)) { XCTAssertTrue($0.isForbidden, "the old owner has lost the right") }
+    let hersNow = try await noor.group.roster()
+    XCTAssertTrue(hersNow.iAmOwner)
+    guard case .ready(let noorsKeyNow) = await noor.group.refreshKeyState() else { return XCTFail() }
+    XCTAssertTrue(noorsKeyNow.isOwner)
+
+    // The feed, from the server's own events.
+    let samsNews = await sam.activity.sync()
+    print("live #115: member1's feed says: \(samsNews.map(\.sentence))")
+    XCTAssertTrue(samsNews.contains { $0.kind == .groupOwner(me: false) })
+    let noorsNews = await noor.activity.sync()
+    print("live #115: member2's feed says: \(noorsNews.map(\.sentence))")
+    XCTAssertTrue(noorsNews.contains { $0.kind == .groupKeyHanded(toMe: true) }); XCTAssertTrue(noorsNews.contains { $0.kind == .groupOwner(me: true) })
+
+    // Leaving: the owner with another group admin is refused by the server with a coded condition (PR #117).
+    let preview = await noor.accountDeletion.preview()
+    XCTAssertTrue(preview.isOwnerWithOtherAdmins)
+    await assertThrowsAppError(try await noor.sessions.deleteAccount(password: "password2")) {
+      print("live #115/#117: the server refuses the owner's deletion with condition \($0.conflictCondition ?? "none"): \($0.userMessage ?? "")")
+      XCTAssertEqual($0.conflictCondition, "group_owner")
+    }
+    XCTAssertTrue(noor.sessions.state.isSignedIn)
+    let samsPreview = await sam.accountDeletion.preview()
+    XCTAssertFalse(samsPreview.isOwnerWithOtherAdmins)
+  }
 }

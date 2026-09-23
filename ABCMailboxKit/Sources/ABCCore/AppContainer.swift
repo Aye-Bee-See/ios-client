@@ -60,11 +60,14 @@ public final class AppContainer {
     offline = OfflineDirectory(api: api, directory: offlineDirectory)
     directory = DirectoryRepository(api: api, offline: offline)
     letters = LettersRepository(api: api, files: files, codec: codec, engine: engine)
-    group = GroupRepository(api: api, letters: letters, directory: directory, codec: codec, keyring: keyring, engine: engine, vault: vault, sessions: sessions)
+    let groupRepo = GroupRepository(api: api, letters: letters, directory: directory, codec: codec, keyring: keyring, engine: engine, vault: vault, sessions: sessions)
+    group = groupRepo
     let cipher = SecretCipher(store: secrets)
     drafts = draftsDirectory.map { DraftsRepository(cipher: cipher, directory: $0) } ?? DraftsRepository(cipher: cipher)
     outbox = OutboxRepository(directory: outboxDirectory, cipher: cipher, files: files, letters: letters, sessions: sessions)
     activity = ActivityRepository(api: api, sessions: sessions, defaults: defaults)
+    // A copy of the group key handed or withdrawn, or the owner changed: the loaded key follows, from any fetch of the feed.
+    activity.onGroupKeyChange = { [groupRepo] in await groupRepo.refreshKeyState() }
     accountDeletion = AccountDeletion(sessions: sessions, modes: modes, letters: letters, group: group, drafts: drafts, outbox: outbox, activity: activity)
     devServer = DevServerRepository(defaults: defaults, holder: holder, sessions: sessions, modes: modes)
   }

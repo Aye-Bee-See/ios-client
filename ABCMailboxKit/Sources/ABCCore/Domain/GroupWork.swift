@@ -34,6 +34,27 @@ public struct GroupMember: Equatable, Identifiable, Sendable {
   public let hasOwnKey: Bool
   public let holdsGroupKey: Bool
   public let isMe: Bool
+  /// The chapter's group-owner admin (API PR #115): the one account that hands the key out, takes it back, or passes the role on.
+  public var isOwner = false
+  /// Has keys of their own and is still to be handed the chapter's.
+  public var isWaiting = false
+
+  public init(id: Int, name: String, hasOwnKey: Bool, holdsGroupKey: Bool, isMe: Bool, isOwner: Bool = false, isWaiting: Bool = false) {
+    self.id = id; self.name = name; self.hasOwnKey = hasOwnKey; self.holdsGroupKey = holdsGroupKey; self.isMe = isMe; self.isOwner = isOwner; self.isWaiting = isWaiting
+  }
+}
+
+/// The group's admins as `GET /auth/member-keys` lists them, with who owns the key. What the Group key page reads.
+public struct GroupRoster: Equatable, Sendable {
+  public let members: [GroupMember]
+  /// Nil on an API from before PR #115, or for a group that has no key yet.
+  public let ownerId: Int?
+  /// Whether this account may hand the key out, take it back, or pass the role on. On an API from before the
+  /// roles, any holder could, and that is what it means there.
+  public let iAmOwner: Bool
+  public var owner: GroupMember? { members.first(where: \.isOwner) }
+  public var waiting: [GroupMember] { members.filter(\.isWaiting) }
+  public var others: [GroupMember] { members.filter { !$0.isMe } }
 }
 
 public struct IssuedToken: Equatable, Sendable {

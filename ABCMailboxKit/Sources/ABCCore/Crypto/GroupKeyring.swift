@@ -6,14 +6,17 @@ import Observation
 public final class GroupKey: Sendable {
   public let groupId: Int
   public let version: Int
+  /// API PR #115: this account is the chapter's group-owner admin.
+  public let isOwner: Bool
   let keyPair: Sodium.KeyPair
   let publicKey: String
 
-  init(groupId: Int, keyPair: Sodium.KeyPair, publicKey: String, version: Int) {
+  init(groupId: Int, keyPair: Sodium.KeyPair, publicKey: String, version: Int, isOwner: Bool = false) {
     self.groupId = groupId
     self.keyPair = keyPair
     self.publicKey = publicKey
     self.version = version
+    self.isOwner = isOwner
   }
 }
 
@@ -141,7 +144,7 @@ public final class GroupKeyring {
     else { return set(.notHeld(groupId: groupId)) }
 
     loadedFor = me.id
-    set(.ready(GroupKey(groupId: groupId, keyPair: groupPair, publicKey: publicKey, version: org?.keyVersion ?? 1)))
+    set(.ready(GroupKey(groupId: groupId, keyPair: groupPair, publicKey: publicKey, version: org?.keyVersion ?? 1, isOwner: org?.isOwner ?? false)))
 
     // Custody keys. A failure here leaves those writers' own envelopes closed; the group's envelopes still open.
     if let envelope: APIEnvelope<[WriterDTO]> = try? await api.get("auth/writers", query: [("page_size", "100")]) {

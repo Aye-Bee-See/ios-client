@@ -153,7 +153,7 @@ public final class APIClient: Sendable {
     // Like a 409, a 404 may carry the useful sentence in `error` ("Message 99999 not found") under a general `info`.
     case 404: return .notFound(envelope?.error ?? info)
     // Lifecycle refusals put the useful sentence in `error` ("A printed letter cannot move to queued"); `info` is generic.
-    case 409: return .conflict(envelope?.error ?? info, name: envelope?.name)
+    case 409: return .conflict(envelope?.error ?? info, name: envelope?.name, condition: envelope?.condition)
     case 410: return .gone(info, condition: AppError.goneCondition(envelope?.condition, error: envelope?.error))
     // An Idempotency-Key reused for a different request (API PR #97). Retrying unchanged would get the
     // same answer, so it is a refusal, not a server fault.

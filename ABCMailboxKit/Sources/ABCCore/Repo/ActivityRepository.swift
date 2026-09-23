@@ -21,6 +21,9 @@ public final class ActivityRepository {
   @ObservationIgnored private let sessions: SessionRepository
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored public weak var notifier: ActivityNotifier?
+  /// Run when the feed says this account's group key or role changed (API PR #115), from every fetch, in the
+  /// background included: the cursor moves on with each fetch, so the reload has to happen where the fetch does.
+  @ObservationIgnored var onGroupKeyChange: (@MainActor () async -> Void)?
 
   init(api: APIClient, sessions: SessionRepository, defaults: UserDefaults) {
     self.api = api
@@ -58,9 +61,15 @@ public final class ActivityRepository {
       if case .number(let n)? = e.detail?["held"] { held = Int(n) }
       var count = 1
       if case .number(let n)? = e.detail?["count"], n >= 1 { count = Int(n) }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held), chatId: e.chat, messageId: e.message, count: count)
+      var action: String?
+      if case .string(let s)? = e.detail?["action"] { action = s }
+      var member: Int?, owner: Int?
+      if case .number(let n)? = e.detail?["member"] { member = Int(n) }
+      if case .number(let n)? = e.detail?["owner"] { owner = Int(n) }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user), chatId: e.chat, messageId: e.message, count: count)
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
+    if fresh.contains(where: \.kind.concernsGroupKey) { await onGroupKeyChange?() }
     if announce, let summary = ActivitySummary(fresh) { notifier?.show(summary, unread: unread) }
     return fresh
   }

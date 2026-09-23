@@ -182,6 +182,12 @@ final class AppModel {
     if !said.isEmpty { show(said.joined(separator: " ")) }
   }
 
+  /// After the key page hands the key, stops, or passes the role on: what the Inbox says is waiting follows.
+  func refreshMembersWaiting() async {
+    guard user?.role == Role.chapter, let roster = try? await container.group.roster(), roster.iAmOwner else { membersWaiting = []; return }
+    membersWaiting = roster.members.filter { $0.hasOwnKey && !$0.holdsGroupKey && !$0.isMe }
+  }
+
   /// One confirmation, as the API's guide allows, rather than silently: it grants someone the means to
   /// read the group's mail, and doing it unasked would quietly undo "Stop" on the Group key screen.
   func handKeyToWaitingMembers() async {

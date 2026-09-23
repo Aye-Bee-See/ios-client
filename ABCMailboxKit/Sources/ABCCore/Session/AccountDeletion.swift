@@ -20,8 +20,11 @@ public struct AccountDeletionPreview: Equatable, Sendable {
   /// End-to-end mode: this member is the only one who holds their group's key. The server refuses the
   /// delete (409), because the group could never read its letters again.
   public var isLastKeyHolder = false
-  /// Other members who could be handed the key first.
+  /// Other group admins who could be handed the key first.
   public var membersWhoCouldHoldTheKey: [String] = []
+  /// This account is the group-owner admin and the group has other group admins (API PR #115). The server
+  /// refuses the delete (409): ownership has to be passed on first.
+  public var isOwnerWithOtherAdmins = false
   public var endToEnd = false
 }
 
@@ -48,6 +51,8 @@ public final class AccountDeletion {
   }
 
   static let wrongPassword = AppError.forbidden("That is not this account's password. Nothing was deleted.")
+  static let ownerRefusal = AppError.conflict("You are your group's group-owner admin and the group has other group admins. Make one of them the owner first (Group key, on the Inbox). Nothing was deleted.", name: "AccountDeleteError", condition: "group_owner")
+  static let lastHolderRefusal = AppError.conflict("You are the last person holding your group's key. Hand it to another group admin first (Group key, on the Inbox), or your group could never read its letters again. Nothing was deleted.", name: "AccountDeleteError", condition: "last_key_holder")
 
   public func preview() async -> AccountDeletionPreview {
     var p = AccountDeletionPreview()
@@ -57,9 +62,12 @@ public final class AccountDeletion {
     p.unsentLetters = outbox.items.count
     // A writer's conversations are all theirs. A group member's list is the group's, which stays, so no number is shown.
     if !user.isStaff { p.conversations = (try? await letters.threads(page: 1, pageSize: 1))?.total }
-    if p.endToEnd, user.role == Role.chapter, let members = try? await group.members(), members.contains(where: { $0.isMe && $0.holdsGroupKey }) {
-      p.isLastKeyHolder = !members.contains { !$0.isMe && $0.holdsGroupKey }
-      p.membersWhoCouldHoldTheKey = members.filter { !$0.isMe && $0.hasOwnKey && !$0.holdsGroupKey }.map(\.name)
+    if user.role == Role.chapter, let roster = try? await group.roster() {
+      p.isOwnerWithOtherAdmins = roster.ownerId == user.id && !roster.others.isEmpty
+      if p.endToEnd, roster.members.contains(where: { $0.isMe && $0.holdsGroupKey }) {
+        p.isLastKeyHolder = !roster.members.contains { !$0.isMe && $0.holdsGroupKey }
+        p.membersWhoCouldHoldTheKey = roster.members.filter { !$0.isMe && $0.hasOwnKey && !$0.holdsGroupKey }.map(\.name)
+      }
     }
     return p
   }
@@ -79,7 +87,12 @@ public final class AccountDeletion {
     } catch let e as AppError {
       // The API answers a wrong password with 403 and its own sentence; say plainly that nothing happened.
       if case .forbidden = e { throw Self.wrongPassword }
-      throw e
+      // A refusal with a code (API PR #117) is worded here; one without keeps the server's sentence.
+      switch e.conflictCondition {
+      case "group_owner": throw Self.ownerRefusal
+      case "last_key_holder": throw Self.lastHolderRefusal
+      default: throw e
+      }
     }
     // The session and the keys went with `deleteAccount`. What else this phone held for the account:
     drafts.deleteAll(userId: user.id)

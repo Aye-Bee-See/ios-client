@@ -31,7 +31,7 @@ public final class GroupRepository {
   private func groupKey(force: Bool = false) async throws -> GroupKey {
     switch await keyring.load(force: force, anyMode: true) {
     case .notSetUp: throw AppError.forbidden("Your group has not set up its encryption key yet. Do that first, from the Inbox.")
-    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask a member who holds it to hand it to you.")
+    case .notHeld: throw AppError.forbidden("You have not been given your group's key yet. Ask the group admin in charge of it to hand it to you, from their Inbox, Group key.")
     case let state: return try LetterCodec.key(from: state)
     }
   }
@@ -95,7 +95,7 @@ public final class GroupRepository {
 
   /// Nil when the server does not count yet (an API from before PR #112).
   public func numbers() async throws -> GroupNumbers? {
-    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a group admin of any group.") }
     let envelope: APIEnvelope<ChapterDTO> = try await api.get("chapter/chapter", query: [("id", String(groupId))])
     let dto = try envelope.required("group")
     // Staff-only fields: absent means the server is older than the counting, not that the count is zero.
@@ -105,7 +105,7 @@ public final class GroupRepository {
   }
 
   public func setLettersSentBefore(_ count: Int) async throws {
-    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a group admin of any group.") }
     guard count >= 0 else { throw AppError.validation(["The number cannot be negative."]) }
     // Only the id and the one field: `lettersSent` and `averageTimeDays` are the server's, and sending them changes nothing.
     try await api.send("PUT", "chapter/chapter", body: LettersSentBeforeRequest(id: groupId, lettersSentBefore: count))
@@ -282,8 +282,10 @@ public final class GroupRepository {
       }
     }
 
-    // 3.
-    done.membersWaiting = ((try? await members()) ?? []).filter { $0.hasOwnKey && !$0.holdsGroupKey && !$0.isMe }
+    // 3. Only the group-owner admin can hand the key (API PR #115); anyone else is shown nothing to do.
+    if let roster = try? await roster(), roster.iAmOwner {
+      done.membersWaiting = roster.members.filter { $0.hasOwnKey && !$0.holdsGroupKey && !$0.isMe }
+    }
     return done
   }
 
@@ -298,7 +300,7 @@ public final class GroupRepository {
   /// Makes the group's keypair on this device, once, and seals the private half to this member.
   public func setUpGroupKey() async throws {
     guard let user = viewer else { throw AppError.unauthorized("You are signed out.") }
-    guard let groupId = user.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    guard let groupId = user.chapterId else { throw AppError.forbidden("This account is not a group admin of any group.") }
     guard let mine = vault.keyPair(for: user.id) else { throw AppError.lettersLocked }
     let made = try LetterCodec.sealing { try GroupKeys.createSealed(to: Sodium.toBase64(mine.publicKey)) }
     defer { made.keyPair.wipe() }
@@ -317,13 +319,33 @@ public final class GroupRepository {
     return envelope.data?.members ?? []
   }
 
-  /// The group's members and whether each holds the group key.
-  public func members() async throws -> [GroupMember] {
+  /// The group's admins and whether each holds the group key.
+  public func members() async throws -> [GroupMember] { try await roster().members }
+
+  /// The group's admins, who owns the key, and whether this account does (API PR #115).
+  public func roster() async throws -> GroupRoster {
     guard let user = viewer else { throw AppError.unauthorized("You are signed out.") }
-    guard let groupId = user.chapterId else { return [] }
-    return try await memberRows(groupId: groupId).map {
-      GroupMember(id: $0.id, name: $0.name?.nonBlank ?? $0.username ?? "Member \($0.id)", hasOwnKey: $0.publicKey != nil, holdsGroupKey: $0.holdsGroupKey ?? false, isMe: $0.id == user.id)
+    guard let groupId = user.chapterId else { return GroupRoster(members: [], ownerId: nil, iAmOwner: false) }
+    let envelope: APIEnvelope<MemberKeysDTO> = try await api.get("auth/member-keys", query: [("chapter", String(groupId))])
+    let waiting = Set(envelope.data?.waiting ?? [])
+    let owner = envelope.data?.owner
+    let members = (envelope.data?.members ?? []).map {
+      GroupMember(id: $0.id, name: $0.name?.nonBlank ?? $0.username ?? "Group admin \($0.id)", hasOwnKey: $0.publicKey != nil, holdsGroupKey: $0.holdsGroupKey ?? false, isMe: $0.id == user.id, isOwner: $0.id == owner, isWaiting: waiting.contains($0.id))
     }
+    // An API from before the roles names no owner; there, any holder may hand the key, as before.
+    let iAmOwner = owner.map { $0 == user.id } ?? (members.first { $0.isMe }?.holdsGroupKey ?? false)
+    return GroupRoster(members: members, ownerId: owner, iAmOwner: iAmOwner)
+  }
+
+  public static let handKeyFirst = AppError.validation(["Hand them the group key first. An owner who does not hold the key could hand it to nobody, not even themselves, and only a superadmin could undo that."])
+
+  /// Makes another group admin the chapter's group-owner admin; this account stops being it (API PR #115).
+  /// Only for a group admin who already holds the key: see `docs/DECISIONS.md`.
+  public func makeOwner(_ member: GroupMember) async throws {
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a group admin of any group.") }
+    guard member.holdsGroupKey else { throw Self.handKeyFirst }
+    let _: APIEnvelope<OwnerDTO> = try await api.send("PUT", "auth/chapter-owner", body: OwnerRequest(chapter: groupId, user: member.id))
+    await keyring.load(force: true, anyMode: true) // the loaded key says whether this account owns it
   }
 
   /// A key holder hands the group key to another member, sealed to that member's public key.
@@ -331,7 +353,7 @@ public final class GroupRepository {
     let group = try await groupKey()
     // Their public key comes from the members list, which only this group and admins can read.
     guard let theirKey = try await memberRows(groupId: group.groupId).first(where: { $0.id == memberId })?.publicKey else {
-      throw AppError.validation(["That member has no key of their own yet. They get one the first time they sign in; hand them the group key after that."])
+      throw AppError.validation(["That group admin has no key of their own yet. They get one the first time they sign in; hand them the group key after that."])
     }
     let sealed = try LetterCodec.sealing { try GroupKeys.sealPrivateKey(group.keyPair.privateKey, to: theirKey) }
     do {
@@ -345,7 +367,7 @@ public final class GroupRepository {
 
   /// Stops handing the key out. It cannot take back a key already opened; that needs a rotation.
   public func stopHandingKey(to memberId: Int) async throws {
-    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a member of a group.") }
+    guard let groupId = viewer?.chapterId else { throw AppError.forbidden("This account is not a group admin of any group.") }
     try await api.send("DELETE", "auth/member-key", body: MemberRef(chapter: groupId, user: memberId))
   }
 

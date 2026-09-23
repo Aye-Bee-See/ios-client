@@ -103,8 +103,8 @@ struct AccountView: View {
 
   private func role(_ user: SessionUser) -> String {
     switch user.role {
-    case Role.chapter: return "Support group member" + (user.chapterId.map { " (group \($0))" } ?? " (no group assigned yet)")
-    case Role.admin: return "Network admin"
+    case Role.chapter: return "Group admin" + (user.chapterId.map { " (group \($0))" } ?? " (no group assigned yet)")
+    case Role.admin: return "Superadmin"
     default: return "Writer"
     }
   }

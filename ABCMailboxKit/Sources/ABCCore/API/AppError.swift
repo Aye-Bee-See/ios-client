@@ -15,7 +15,8 @@ public enum AppError: Error, Equatable, Sendable {
   /// A lifecycle or state conflict (409), for example moving a letter backwards. `name` is the API's
   /// error name (`KeyVersionError`, `LetterStatusError`, `IdempotencyError`), for the few callers that
   /// must tell them apart.
-  case conflict(String?, name: String? = nil)
+  /// `condition`: the API's code for why, where it sends one (API PR #117: `AccountDeleteError` says `group_owner`, `last_key_holder`, …).
+  case conflict(String?, name: String? = nil, condition: String? = nil)
   /// A used or expired claim token (410).
   /// `condition` says why, where the server says so: a claim token that is `expired` sends the person to their
   /// group for a new one; one that is `used` means somebody has the account already, which is a different conversation.
@@ -36,7 +37,7 @@ public enum AppError: Error, Equatable, Sendable {
     switch self {
     case .validation(let errors): return errors.joined(separator: " ")
     case .unauthorized(let info), .notFound(let info), .gone(let info, _): return info
-    case .conflict(let info, _): return info
+    case .conflict(let info, _, _): return info
     case .forbidden(let info): return info
     case .rateLimited(let info, let retryAfter):
       if let info { return info }
@@ -58,21 +59,22 @@ public enum AppError: Error, Equatable, Sendable {
   }
 
   public var isForbidden: Bool { if case .forbidden = self { return true } else { return false } }
+  public var conflictCondition: String? { if case .conflict(_, _, let condition) = self { return condition } else { return nil } }
   public var isConflict: Bool { if case .conflict = self { return true } else { return false } }
   /// The same Idempotency-Key is being processed right now (a retry racing the original, API PR #97):
   /// wait a second and ask again. Not to be confused with a group's key rotation, which is also a 409.
-  public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError") = self { return true } else { return false } }
+  public var isStillProcessing: Bool { if case .conflict(_, name: "IdempotencyError", _) = self { return true } else { return false } }
   /// The server would not take the password in the form it was sent: a plain password for a split account, or the
   /// other way round (API PR #114, `409 AuthSchemeError`).
-  public var isSchemeRefused: Bool { if case .conflict(_, name: "AuthSchemeError") = self { return true } else { return false } }
+  public var isSchemeRefused: Bool { if case .conflict(_, name: "AuthSchemeError", _) = self { return true } else { return false } }
   /// A group rotated its key between our reading it and our using it.
-  public var isKeyRotated: Bool { if case .conflict(_, name: "KeyVersionError") = self { return true } else { return false } }
+  public var isKeyRotated: Bool { if case .conflict(_, name: "KeyVersionError", _) = self { return true } else { return false } }
   /// A status move lost a race: another volunteer, or a double tap, got there first, or the letter was held or
   /// handed to another group in that moment. The letter is very probably already where the person wanted it,
   /// so this is "look again", not a failure to show in red.
-  public var isChangedMeanwhile: Bool { if case .conflict(let text?, name: "LetterStatusError") = self { return text.contains("meanwhile") } else { return false } }
+  public var isChangedMeanwhile: Bool { if case .conflict(let text?, name: "LetterStatusError", _) = self { return text.contains("meanwhile") } else { return false } }
   /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
-  public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError") = self { return true } else { return false } }
+  public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError", _) = self { return true } else { return false } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }
   /// Why something is gone. The API keeps a code for it (`expired`, `used`) but does not put it in the answer yet;
   /// what arrives is the sentence it builds from the code, "Claim token is expired." So the code is read back out
