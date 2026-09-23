@@ -2,6 +2,14 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-23: invite slips are made on the phone, and a code is checked before it is sent
+
+**Context.** API PR #116: a chapter issues a batch of invite codes, shown once; a newcomer joins with one. The API asks clients to render slips with a QR and offer print or share right there, and folds `O`/`I`/`L` when reading a code.
+
+**Decisions.** The slips are a PDF drawn on the phone (`InviteSlips`, four to a US-letter page, CoreImage for the QR), handed to the system print panel and the share sheet: no server round trip, and nothing about the codes leaves the phone except by the person's hand. The screen forgets the codes when it is left, as the API asks. Because a forgotten batch that was never printed or shared would be live codes nobody can show again, "Done" asks in that case whether to cancel the batch or keep the codes (which then count against the quota until cancelled from the list); once Print or Share has been used the slips exist on paper and the codes are simply forgotten. Issuing waits for the chapter's name from the directory, since it goes on every slip. A code is folded and checked on the phone the way the server folds it, before any request, because the public check is rate limited and a slip is read by eye. The join makes the keypair on the phone and sends it with the code (split), so the account has its keys and its scheme from the first request and the sign-in after it is one derivation; a `400` leaves the code usable, so the same code is sent again after a fix, as the API promises.
+
+**Not done.** The universal link (`https://letters.support/join?code=…`) is parsed, but iOS hands such links to the app only with an associated-domain entitlement and an `apple-app-site-association` file on the site; neither exists yet. Until then the QR opens the website, which can offer the app link.
+
 ## 2026-09-23: "Make owner" is offered only to a holder of the key, and refusals are read by their code
 
 **Context.** API PR #115 gives each group one group-owner admin, the only account that hands the key out, takes it back, rotates it, or passes the role on. `PUT /auth/chapter-owner` lets the role go to any group admin of the chapter, holder of the key or not, and answers `holdsGroupKey` so the client knows which. PR #117 puts a `condition` on `AccountDeleteError`.
