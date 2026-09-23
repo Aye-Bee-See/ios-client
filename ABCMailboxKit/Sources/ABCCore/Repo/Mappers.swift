@@ -120,7 +120,9 @@ extension MessageDTO {
       returnReason: .from(key: returnReason),
       heldReason: .from(key: heldReason),
       resendOf: resendOf,
-      resentAs: (resentAs ?? []).map { Resend(id: $0.id, status: .from(key: $0.status), createdAt: $0.createdAt.instant) }
+      resentAs: (resentAs ?? []).map { Resend(id: $0.id, status: .from(key: $0.status), createdAt: $0.createdAt.instant) },
+      returnNoteOnLetter: returnNote?.nonBlank,
+      returnNoteKnown: returnNoteKnown
     )
   }
 }
@@ -140,7 +142,7 @@ extension ChatDTO {
     for i in letters.indices where letters[i].status == .returned && letters[i].resentAs.isEmpty {
       letters[i].resentAs = letters.filter { $0.resendOf == letters[i].id }.map { Resend(id: $0.id, status: $0.status, createdAt: $0.createdAt) }
     }
-    return LetterThread(
+    var thread = LetterThread(
       id: id,
       prisonerId: prisoner,
       prisoner: prisonerDetails?.toDomain(),
@@ -149,6 +151,9 @@ extension ChatDTO {
       letters: letters,
       writer: userDetails.map { ThreadWriter(id: $0.id, name: $0.name?.nonBlank ?? $0.username, managedByGroupId: $0.managedBy, anonymousForGroupId: $0.anonymousForChapter) }
     )
+    thread.heldCount = heldCount ?? 0
+    thread.heldReasons = (heldReasons ?? []).compactMap { HeldReason.from(key: $0) }
+    return thread
   }
 }
 

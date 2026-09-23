@@ -62,9 +62,12 @@ struct ChatDTO: Decodable {
   let messages: [MessageDTO]?
   let userDetails: UserDTO?
   let prisonerDetails: PrisonerDTO?
+  /// API PR #117: how many of the thread's letters are held, and the distinct reasons.
+  let heldCount: Int?
+  let heldReasons: [String]?
 
   private enum CodingKeys: String, CodingKey {
-    case id, prisoner, updatedAt, lastMessageAt, messages
+    case id, prisoner, updatedAt, lastMessageAt, messages, heldCount, heldReasons
     case lastMessage = "last_message", userDetails = "user_details", prisonerDetails = "prisoner_details"
   }
 }
@@ -103,6 +106,11 @@ struct MessageDTO: Decodable {
   let relayNoteNonce: String?
   let envelopes: [EnvelopeDTO]?
   let returnReason: String?
+  /// API PR #117: the return's note on the letter itself, so a conversation need not read every returned letter's
+  /// history. Three states on the wire: absent (an older API), null (no note was given), a string. Synthesised
+  /// decoding folds the first two together, so this type decodes itself and records whether the key was there.
+  let returnNote: String?
+  let returnNoteKnown: Bool
   let heldReason: String?
   let resendOf: Int?
   let resentAs: [ResentAsDTO]?
@@ -111,10 +119,41 @@ struct MessageDTO: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
-    case returnReason, heldReason, resendOf
+    case returnReason, returnNote, heldReason, resendOf
     case resentAs = "resent_as", prisonerDetails = "prisoner_details"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(Int.self, forKey: .id)
+    chat = try c.decodeIfPresent(Int.self, forKey: .chat)
+    sender = try c.decode(String.self, forKey: .sender)
+    prisoner = try c.decode(Int.self, forKey: .prisoner)
+    user = try c.decodeIfPresent(Int.self, forKey: .user)
+    status = try c.decodeIfPresent(String.self, forKey: .status)
+    relayChapter = try c.decodeIfPresent(Int.self, forKey: .relayChapter)
+    relayNote = try c.decodeIfPresent(String.self, forKey: .relayNote)
+    messageText = try c.decodeIfPresent(String.self, forKey: .messageText)
+    keep = try c.decodeIfPresent(Bool.self, forKey: .keep)
+    statusChangedAt = try c.decodeIfPresent(String.self, forKey: .statusChangedAt)
+    createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+    statusHistory = try c.decodeIfPresent([StatusHistoryDTO].self, forKey: .statusHistory)
+    attachments = try c.decodeIfPresent([AttachmentDTO].self, forKey: .attachments)
+    relayGroup = try c.decodeIfPresent(RelayGroupDTO.self, forKey: .relayGroup)
+    ciphertext = try c.decodeIfPresent(String.self, forKey: .ciphertext)
+    nonce = try c.decodeIfPresent(String.self, forKey: .nonce)
+    relayNoteCiphertext = try c.decodeIfPresent(String.self, forKey: .relayNoteCiphertext)
+    relayNoteNonce = try c.decodeIfPresent(String.self, forKey: .relayNoteNonce)
+    envelopes = try c.decodeIfPresent([EnvelopeDTO].self, forKey: .envelopes)
+    returnReason = try c.decodeIfPresent(String.self, forKey: .returnReason)
+    returnNoteKnown = c.contains(.returnNote)
+    returnNote = try c.decodeIfPresent(String.self, forKey: .returnNote)
+    heldReason = try c.decodeIfPresent(String.self, forKey: .heldReason)
+    resendOf = try c.decodeIfPresent(Int.self, forKey: .resendOf)
+    resentAs = try c.decodeIfPresent([ResentAsDTO].self, forKey: .resentAs)
+    prisonerDetails = try c.decodeIfPresent(PrisonerDTO.self, forKey: .prisonerDetails)
   }
 }
 

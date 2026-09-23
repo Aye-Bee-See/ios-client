@@ -82,9 +82,13 @@ struct ThreadRow: View {
     let writer = showWriter ? t.writer.map { "Writer: \($0.label)" } : nil
     let facility = t.prisoner?.facility.map { $0.name + ($0.country.map { ", \($0)" } ?? "") }
     let secondary = [writer, facility].compactMap { $0 }.joined(separator: " · ")
+    // API PR #117: a conversation with a held letter says so on its row, and which side it waits on.
+    let held: String? = t.heldCount == 0 ? nil : t.waitsOnWriter
+      ? (t.heldCount == 1 ? "A letter is waiting for you to decide" : "\(t.heldCount) letters are waiting for you to decide")
+      : "\(Format.plural(t.heldCount, "letter")) on hold"
     RecordRow(
       title: t.title, secondary: secondary.isEmpty ? nil : secondary,
-      subtitle: direction + (t.lastActivity.map { " · \(Format.short($0))" } ?? ""), action: action
+      subtitle: direction + (t.lastActivity.map { " · \(Format.short($0))" } ?? ""), notice: held, action: action
     )
   }
 }

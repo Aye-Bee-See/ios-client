@@ -159,8 +159,12 @@ public struct Letter: Equatable, Identifiable, Sendable {
   /// What the status chip says. A hold replaces "Queued": that word tells a writer a group will print the
   /// letter, and for a held one that is false, which is the whole point of telling them.
   public var statusLabel: String { isHeld ? "On hold" : status.label }
-  /// What the group wrote when it recorded the return. Never encrypted, in any mode.
-  public var returnNote: String? { history.last { $0.to == .returned }?.note }
+  /// What the group wrote when it recorded the return. Never encrypted, in any mode. On the letter itself since
+  /// API PR #117; from the history row before that.
+  public var returnNote: String? { returnNoteOnLetter ?? history.last { $0.to == .returned }?.note }
+  var returnNoteOnLetter: String? = nil
+  /// The API said what the note is (API PR #117), even if that is "none". False for an older API, which says nothing.
+  var returnNoteKnown = false
   /// A returned letter of one's own can be sent again, once.
   public var canSendAgain: Bool { !fromPrisoner && status == .returned && resentAs.isEmpty }
 
@@ -186,6 +190,12 @@ public struct LetterThread: Equatable, Identifiable, Sendable {
   public var letters: [Letter]
   /// The account on the writer's side; groups use it to label threads and to know if they may write in them.
   public let writer: ThreadWriter?
+  /// API PR #117: letters in this conversation that are held, and why. `chooseRelay` and `resealNeeded` wait on
+  /// the writer; `prisonerFree` waits on the group.
+  public var heldCount = 0
+  public var heldReasons: [HeldReason] = []
+
+  public var waitsOnWriter: Bool { heldReasons.contains { $0 == .chooseRelay || $0 == .resealNeeded } }
 
   public var title: String { prisoner?.name ?? "Prisoner #\(prisonerId)" }
 }
