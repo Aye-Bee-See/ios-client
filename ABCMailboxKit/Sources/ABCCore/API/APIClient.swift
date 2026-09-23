@@ -27,7 +27,7 @@ public final class APIClient: Sendable {
   /// worse, their 401 ("wrong password") would be mistaken for "your session was
   /// revoked": checking the current password before a password change would sign
   /// the user out on a typo.
-  private static let publicAuthPaths = ["auth/login", "auth/login-params", "auth/claim", "auth/recover"]
+  private static let publicAuthPaths = ["auth/login", "auth/login-params", "auth/claim", "auth/recover", "auth/join"]
 
   public init(baseURL: DevServerURL, cache: SessionCache, configuration: URLSessionConfiguration = .ephemeral) {
     configuration.timeoutIntervalForRequest = 30

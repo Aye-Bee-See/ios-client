@@ -13,6 +13,7 @@ struct AuthFlowView: View {
         .navigationDestination(for: AuthRoute.self) { route in
           switch route {
           case .claim(let token): ClaimView(app: app, token: token)
+          case .join(let code): JoinView(app: app, code: code)
           case .recover: RecoverView(app: app)
           }
         }
@@ -96,7 +97,8 @@ struct LoginView: View {
       }
       .buttonStyle(.primary).disabled(!model.canSubmit).accessibilityIdentifier("submit")
 
-      Muted("Don't have an account? Accounts are created by support group organizers. Ask the group you write through to set one up for you.").padding(.top, 8)
+      Muted("Don't have an account? A support group gives you an invite code on a slip, or sets an account up for you and hands you a claim token.").padding(.top, 8)
+      Button("I have an invite code") { app.authPath.append(.join(code: nil)) }.buttonStyle(.link)
       Button("I have a claim token") { app.authPath.append(.claim(token: nil)) }.buttonStyle(.link)
       Button("Forgot your password?") { app.authPath.append(.recover) }.buttonStyle(.link)
     }

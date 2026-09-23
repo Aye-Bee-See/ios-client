@@ -29,7 +29,9 @@ struct RootView: View {
     .task { await app.container.modes.refresh() } // Ask the server which letter contract it speaks, once per launch.
     // Keep the offline copy of the directory fresh: at most one quiet download a day, and only if the server answers.
     .task { await app.container.offline.downloadIfOlderThan(hours: 24) }
-    .onOpenURL { url in if let link = ClaimToken.link(url) { app.openClaim(token: link.token) } }
+    .onOpenURL { url in
+      if let link = ClaimToken.link(url) { app.openClaim(token: link.token) } else if let link = InviteCode.link(url) { app.openJoin(code: link.code) }
+    }
     .onChange(of: app.sessions.expiredCount) { app.show("Your session ended. Please sign in again.") }
     .onChange(of: app.user?.id) { old, new in
       // Signing in from signed-out changes nothing that was private; every other change does.
@@ -109,6 +111,7 @@ struct RouteView: View {
     case .handoff(let writerId, let writerName): HandoffView(app: app, writerId: writerId, writerName: writerName)
     case .groupKey: GroupKeyView(app: app)
     case .groupNumbers: GroupNumbersView(app: app)
+    case .inviteCodes: InviteCodesView(app: app)
     case .changePassword: ChangePasswordView(app: app)
     case .deleteAccount: DeleteAccountView(app: app)
     }

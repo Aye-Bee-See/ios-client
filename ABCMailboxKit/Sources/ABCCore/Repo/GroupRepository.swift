@@ -91,6 +91,32 @@ public final class GroupRepository {
     }
   }
 
+  // MARK: - Invite codes (API PR #116)
+
+  /// Issues a batch. The codes come back once; the server keeps only their hashes.
+  public func issueInviteCodes(count: Int, label: String?, days: Int?) async throws -> IssuedInviteCodes {
+    guard (1...50).contains(count) else { throw AppError.validation(["Between 1 and 50 codes at a time."]) }
+    let envelope: APIEnvelope<IssuedInviteCodesDTO> = try await api.send("POST", "auth/invite-codes", body: IssueInviteCodesRequest(count: count, label: label?.trimmed.nonBlank, days: days))
+    let d = try envelope.required("invite codes")
+    return IssuedInviteCodes(batch: d.batch ?? "", label: d.label?.nonBlank, expiresAt: d.expiresAt.instant, codes: d.codes ?? [], outstanding: d.outstanding ?? 0, limit: d.limit ?? 0)
+  }
+
+  /// The chapter's batches as counts, and how much of the quota is in use.
+  public func inviteCodes() async throws -> InviteCodeQuota {
+    let envelope: APIEnvelope<InviteCodesDTO> = try await api.get("auth/invite-codes")
+    let d = try envelope.required("invite codes")
+    return InviteCodeQuota(outstanding: d.outstanding ?? 0, limit: d.limit ?? 0, batches: (d.batches ?? []).map {
+      InviteCodeBatch(id: $0.batch, label: $0.label?.nonBlank, createdAt: $0.createdAt.instant, expiresAt: $0.expiresAt.instant, total: $0.total ?? 0, used: $0.used ?? 0, cancelled: $0.cancelled ?? 0, expired: $0.expired ?? 0, unused: $0.unused ?? 0)
+    })
+  }
+
+  /// Cancels the unused codes of one batch (or of every batch). Used codes are untouched. Answers how many were cancelled.
+  @discardableResult
+  public func cancelInviteCodes(batch: String?) async throws -> Int {
+    let envelope: APIEnvelope<CancelledInviteCodesDTO> = try await api.send("DELETE", "auth/invite-codes", body: CancelInviteCodesRequest(batch: batch, all: batch == nil ? true : nil))
+    return envelope.data?.cancelled ?? 0
+  }
+
   // MARK: - The group's numbers (API PR #112)
 
   /// Nil when the server does not count yet (an API from before PR #112).
