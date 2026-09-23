@@ -193,7 +193,7 @@ private struct QueueRow: View {
     let pages = estimatePages(characters: letter.body.count)
     let facts: [String?] = [
       letter.createdAt.map { "Written \(Format.short($0))" },
-      "~\(Format.plural(pages, "page"))",
+      letter.paper ? nil : "~\(Format.plural(pages, "page"))", // nothing of a paper letter is printed here
       letter.attachments.isEmpty ? nil : Format.plural(letter.attachments.count, "file"),
     ]
     let row = RecordRow(

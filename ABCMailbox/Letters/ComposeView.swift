@@ -94,7 +94,9 @@ struct ComposeView: View {
       ErrorText(model.error)
 
       Button(model.sendLabel) { Task { await model.send() } }.buttonStyle(.primary).disabled(!model.canSend)
-      if model.onPaper {
+      if let problem = model.paperGroupProblem {
+        Text(problem).font(Theme.bodyMedium).foregroundStyle(Theme.red)
+      } else if model.onPaper {
         Muted("Nothing is printed. Hand the letter to your relay group; it goes out with their next batch, and a reply will come back to this conversation.")
       } else if !model.recordingReply {
         Muted("Your letter won't be sent immediately. It goes to your relay group's queue, where they will print and physically mail it on your behalf.")

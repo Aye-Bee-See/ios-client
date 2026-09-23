@@ -58,6 +58,7 @@ final class ThreadModel {
     guard let data = image.jpegData(compressionQuality: 0.85), let staged = try? app.container.files.stage(data: data, name: "page-\(Int(Date().timeIntervalSince1970)).jpg", mimeType: "image/jpeg") else {
       app.show("Could not read that photo."); return
     }
+    guard staged.size <= maxAttachmentBytes else { app.container.files.discard(staged); app.show("That file is over 20 MB."); return }
     busyMessageId = messageId
     defer { busyMessageId = nil }
     do {

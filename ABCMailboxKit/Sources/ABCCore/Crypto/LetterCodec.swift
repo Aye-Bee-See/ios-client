@@ -90,11 +90,13 @@ final class LetterCodec {
     let relayChapter = letter.fromPrisoner ? nil : letter.relayChapter
     let note = letter.fromPrisoner ? nil : letter.relayNote?.nonBlank
     var request = SendMessageRequest(prisoner: letter.prisonerId, sender: sender, user: letter.asWriterId, relayChapter: relayChapter, resendOf: letter.fromPrisoner ? nil : letter.resendOf)
-    // A reply on paper is what every reply already is: the flag goes only with an outgoing letter.
-    if letter.paper, !letter.fromPrisoner { request.paper = true }
+    // A reply on paper is what every reply already is: the flag goes only with an outgoing letter, and so does
+    // the empty body it allows.
+    let paper = letter.paper && !letter.fromPrisoner
+    if paper { request.paper = true }
     guard await isEndToEnd() else {
       // A paper letter needs no text; a transcription, if typed, travels like any body.
-      request.messageText = letter.paper && letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : letter.body
+      request.messageText = paper && letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : letter.body
       request.relayNote = note
       return (request, nil)
     }

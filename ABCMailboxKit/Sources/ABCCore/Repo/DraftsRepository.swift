@@ -4,13 +4,25 @@ public struct Draft: Codable, Equatable, Sendable {
   public let body: String
   public let note: String?
   public let relayChapter: Int?
+  /// "This letter is on paper" (API PR #118), so a logged-but-unsent paper letter comes back as one.
+  public let paper: Bool
   public let updatedAt: Date
 
-  public init(body: String, note: String?, relayChapter: Int?, updatedAt: Date = Date()) {
+  public init(body: String, note: String?, relayChapter: Int?, paper: Bool = false, updatedAt: Date = Date()) {
     self.body = body
     self.note = note
     self.relayChapter = relayChapter
+    self.paper = paper
     self.updatedAt = updatedAt
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    body = try c.decode(String.self, forKey: .body)
+    note = try c.decodeIfPresent(String.self, forKey: .note)
+    relayChapter = try c.decodeIfPresent(Int.self, forKey: .relayChapter)
+    paper = try c.decodeIfPresent(Bool.self, forKey: .paper) ?? false // a draft saved before the switch existed
+    updatedAt = try c.decode(Date.self, forKey: .updatedAt)
   }
 }
 

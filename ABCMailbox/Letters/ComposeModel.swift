@@ -72,7 +72,25 @@ final class ComposeModel {
   var title: String { recordingReply ? "Record a reply" : editing ? "Edit letter" : "New letter" }
   var sendLabel: String { progress ?? (recordingReply ? "Save reply" : editing ? "Save changes" : onPaper ? "Log the paper letter" : "Send letter") }
   /// A paper letter can be chosen for a new outgoing letter only: never for a reply, and never on an edit (the API ignores it).
-  var canBeOnPaper: Bool { !recordingReply && !editing && request.outboxId == nil }
+  var canBeOnPaper: Bool { !recordingReply && !editing }
+  /// A group member's own group, where it relays for this facility: the server then mails through it unasked.
+  private var ownGroupRelaysHere: Bool { staffGroupId.map { id in facility?.relayGroups.contains { $0.id == id } == true } ?? false }
+  /// A paper letter is one a group mails, so the server refuses one without a group (API PR #118). This is
+  /// what the server will resolve: the one relay group, the chosen one, or a member's own group.
+  private var mailingGroupKnown: Bool {
+    switch relay {
+    case .automatic: return true
+    case .choose: return selectedRelay != nil || ownGroupRelaysHere
+    case .direct, .blocked: return ownGroupRelaysHere
+    }
+  }
+  var paperNeedsGroup: Bool { onPaper && canBeOnPaper && !mailingGroupKnown }
+  /// Why the paper letter cannot be logged yet, for the form.
+  var paperGroupProblem: String? {
+    guard paperNeedsGroup else { return nil }
+    if case .choose = relay { return "Choose below which group has the letter: it goes out with that group's next batch." }
+    return "This facility has no relay group listed, so there is no group to hand a paper letter to. If you mailed it yourself, there is nothing to log here."
+  }
   var characters: Int { body.count }
   var pages: Int { estimatePages(characters: characters) }
   private var mailRules: MailRules { facility?.rules ?? MailRules() }
@@ -89,7 +107,7 @@ final class ComposeModel {
   }
   // A recorded reply is not mailed anywhere, so the facility's routing cannot block it.
   var canSend: Bool {
-    !loading && !sending && (recordingReply || (!relayIsBlocked && !needsRelayChoice))
+    !loading && !sending && (recordingReply || (!relayIsBlocked && !needsRelayChoice)) && !paperNeedsGroup
       // A paper letter needs no text and no file: the record is the point.
       && (onPaper || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
   }
@@ -126,11 +144,13 @@ final class ComposeModel {
     } else if let outboxId = request.outboxId, let queued = app.container.outbox.open(outboxId) {
       body = queued.payload.body; note = queued.payload.relayNote ?? ""; selected = queued.payload.relayChapter ?? selected
       attachments = queued.files
+      onPaper = queued.payload.paper ?? false
       // Unchanged, it is still the same letter: an earlier attempt may have arrived unheard, and only the
       // same key lets the server say so. Edited, it is a different letter and gets a new key.
-      sendKey = (queued.payload.idempotencyKey, body)
+      sendKey = (queued.payload.idempotencyKey, Self.fingerprint(body, onPaper: onPaper))
     } else if usesDrafts, let userId, let draft = app.container.drafts.load(userId: userId, prisonerId: request.prisonerId) {
       body = draft.body; note = draft.note ?? ""; selected = draft.relayChapter ?? selected; restored = true
+      onPaper = draft.paper && canBeOnPaper
     }
     prisoner = found; facility = place; relay = resolved
     self.body = body; self.note = note; selectedRelay = selected
@@ -156,10 +176,11 @@ final class ComposeModel {
   private func saveDraft(userId: Int) {
     guard !sent else { return }
     let drafts = app.container.drafts
-    if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    // A paper letter needs no text, so the switch alone is a draft worth keeping.
+    if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !onPaper {
       drafts.delete(userId: userId, prisonerId: request.prisonerId)
     } else {
-      drafts.save(userId: userId, prisonerId: request.prisonerId, draft: Draft(body: body, note: note.isEmpty ? nil : note, relayChapter: selectedRelay))
+      drafts.save(userId: userId, prisonerId: request.prisonerId, draft: Draft(body: body, note: note.isEmpty ? nil : note, relayChapter: selectedRelay, paper: onPaper))
     }
   }
 
@@ -269,9 +290,11 @@ final class ComposeModel {
     if let old = request.outboxId { app.container.outbox.delete(old) }
   }
 
+  // The key covers the letter as it is: on paper or typed is part of that (the API's fingerprint includes `paper`).
+  private static func fingerprint(_ body: String, onPaper: Bool) -> String { (onPaper ? "paper:" : "") + body }
+
   private func keyForThisLetter() -> String {
-    // The key covers the letter as it is: on paper or typed is part of that (the API's fingerprint includes `paper`).
-    let body = (onPaper ? "paper:" : "") + body
+    let body = Self.fingerprint(body, onPaper: onPaper)
     if let sendKey, sendKey.body == body { return sendKey.key }
     let fresh = UUID().uuidString
     sendKey = (fresh, body)

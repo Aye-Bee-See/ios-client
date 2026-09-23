@@ -403,6 +403,17 @@ final class LiveServerTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(listed.first { $0.id == writer.id }?.tokenExpiresAt).timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 1)
   }
 
+  /// A raw request as a signed-in account, for what the app never sends on purpose.
+  private func post(_ base: String, _ path: String, _ body: [String: Any], token: String) async throws -> (status: Int, body: [String: Any]) {
+    var request = URLRequest(url: try XCTUnwrap(URL(string: base.hasSuffix("/") ? base + path : base + "/" + path)))
+    request.httpMethod = "POST"
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    return ((response as? HTTPURLResponse)?.statusCode ?? 0, (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:])
+  }
+
   /// What the server says an account's scheme is, asked as the app asks, without a token.
   private func scheme(_ base: String, _ username: String) async throws -> String? {
     var comps = try XCTUnwrap(URLComponents(string: base.hasSuffix("/") ? base + "auth/login-params" : base + "/auth/login-params"))
@@ -673,9 +684,16 @@ final class LiveServerTests: XCTestCase {
     let again = try writer.files.stage(data: page, name: "late.jpg", mimeType: "image/jpeg")
     await assertThrowsAppError(try await writer.letters.upload(messageId: logged.id, staged: again)) {
       print("live #118: a photo after mailing is refused: \($0)")
+      XCTAssertTrue($0.isForbidden)
+      XCTAssertEqual($0.userMessage, "Attachments of a mailed letter can no longer be changed.")
     }
-    // A reply on paper is refused by the API too (the codec never sends the flag on a reply, so ask the server directly).
-    let writerScheme = try await scheme(base, "user1")
-    XCTAssertEqual(writerScheme, "split", "under the flag")
+    // A reply on paper is refused by the API too. The codec never sends the flag on a reply, so this asks the
+    // server directly, as the group recording a reply for the writer would if it did.
+    let memberToken = try XCTUnwrap(member.sessions.state.session?.token)
+    let writerId = try XCTUnwrap(writer.sessions.state.user?.id)
+    let refused = try await post(base, "messaging/message", ["prisoner": 1, "sender": "prisoner", "user": writerId, "paper": true], token: memberToken)
+    print("live #118: a reply on paper: \(refused.status) \(refused.body)")
+    XCTAssertEqual(refused.status, 400)
+    XCTAssertTrue(String(describing: refused.body).contains("paper is for outgoing letters"))
   }
 }
