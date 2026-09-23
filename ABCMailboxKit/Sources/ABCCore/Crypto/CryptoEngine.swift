@@ -9,7 +9,10 @@ struct NewAccountKeys: Sendable {
   var authKey: String? = nil
 }
 
-/// One sign-in's derived keys (API PR #114). Wiped as soon as the wrap key has opened the private key.
+/// One sign-in's derived keys (API PR #114). `wipe()` zeroes the wrap key as soon as it has opened the private
+/// key. The auth key is a `String`, like the typed password it stands in for and the request body it is written
+/// into, and Swift gives no way to zero those: it is a credential the server already holds a hash of, worth no
+/// more than the password string beside it, and it is not what opens a letter.
 final class SplitKeys: @unchecked Sendable {
   private(set) var wrapKey: Data
   let authKey: String

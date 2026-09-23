@@ -69,6 +69,46 @@ final class SplitSignInTests: XCTestCase {
     XCTAssertFalse(sessions.state.isSignedIn)
   }
 
+  func testAMalformedHandshakeIsRefusedNotReadAsPlain() async throws {
+    // A 200 with no data, a "split" missing its salt and recipe, and an unknown scheme: each would, read as plain,
+    // be a way to be sent the password for a name this phone does not know yet. None is.
+    fake.accounts = [FakeAPI.Account(id: 4, username: "user1", password: password)]
+    for answer in [Stubbed.json(["success": true, "status": 200]), .data(["scheme": "split"]), .data(["scheme": "split", "kdfSalt": "AAAAAAAAAAAAAAAAAAAAAA=="]), .data(["scheme": "argon-plus", "kdfSalt": "x", "kdfParams": ["kdf": "argon2id"]])] {
+      fake.intercept = { r in r.path == "/auth/login-params" ? answer : nil }
+      await assertThrowsAppError(try await sessions.login(username: "user1", password: password)) { XCTAssertEqual($0, SessionRepository.malformedHandshake) }
+    }
+    XCTAssertEqual(app.requests(to: "/auth/login", method: "POST").count, 0, "nothing was sent")
+    // Said plainly, plain is plain.
+    fake.intercept = { r in r.path == "/auth/login-params" ? .data(["scheme": "plain", "kdfSalt": "AAAAAAAAAAAAAAAAAAAAAA==", "kdfParams": ["kdf": "argon2id"]]) : nil }
+    try await sessions.login(username: "user1", password: password)
+    XCTAssertEqual(sentPasswords(), [password])
+  }
+
+  func testAPasswordChangeStopsWhenTheKeyCannotBeFetchedOrOpenedRatherThanLeaveItUnderTheOldPassword() async throws {
+    let (account, kp) = try splitAccount()
+    fake.accounts = [account]
+    try await sessions.login(username: "user1", password: password)
+    app.container.vault.clear() // a restored phone: signed in, no key here
+    let before = fake.accounts[0].keys["wrappedPrivateKey"] as? String
+
+    // The bundle cannot be fetched: nothing changes.
+    fake.intercept = { r in r.path == "/auth/keys" && r.method == "GET" ? .error(503, info: "Try later.") : nil }
+    await assertThrowsAppError(try await sessions.changePassword(current: password, new: "A different passphrase")) { XCTAssertNotEqual($0, .validation(["Your current password is incorrect."]), "the password was right; the fetch failed") }
+    XCTAssertEqual(app.requests(to: "/auth/user", method: "PUT").count, 0)
+    XCTAssertEqual(fake.accounts[0].password, account.password)
+
+    // The bundle has a key the current password does not open (tampered, or another device's): nothing changes.
+    fake.accounts[0].keys["wrappedPrivateKey"] = try AccountKeys.wrapForSplitPassword(Sodium.keypair(), password: "someone else's").wrapped.wrapped
+    await assertThrowsAppError(try await sessions.changePassword(current: password, new: "A different passphrase")) { XCTAssertTrue($0.userMessage?.contains("was not changed") == true) }
+    XCTAssertEqual(app.requests(to: "/auth/user", method: "PUT").count, 0)
+    fake.accounts[0].keys["wrappedPrivateKey"] = before
+
+    // Fetched and opened: the change re-wraps the same key.
+    try await sessions.changePassword(current: password, new: "A different passphrase")
+    let again = try SplitAuth.derive(password: "A different passphrase", salt: Sodium.fromBase64(fake.accounts[0].keys["kdfSalt"] as! String))
+    XCTAssertEqual(try AccountKeys.unlockWithWrapKey(publicKey: account.keys["publicKey"] as! String, wrapped: fake.accounts[0].keys["wrappedPrivateKey"] as! String, wrapKey: again.wrapKey).privateKey, kp.privateKey)
+  }
+
   func testUnderTheFlagAnAccountFromBeforeSignsInByTheFallbackOnceAndAKnownSplitOneDoesNot() async throws {
     fake.requireSplitAuth = true
     fake.accounts = [FakeAPI.Account(id: 4, username: "olduser", password: password)]

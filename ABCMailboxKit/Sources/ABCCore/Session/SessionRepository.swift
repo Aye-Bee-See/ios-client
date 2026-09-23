@@ -97,16 +97,23 @@ public final class SessionRepository {
     .forbidden("This phone has signed in to \(username) without sending the password, and the server now asks for the password itself. That is not how this account works, so nothing was sent. Try again later; if it keeps happening, tell your group.")
   }
 
+  static let malformedHandshake = AppError.forbidden("The server's sign-in answer was not one this app understands, so nothing was sent. Try again later; if it keeps happening, the app may need updating.")
+
   /// Step one: the handshake. Nil from an API from before PR #114, which has no such address: every account on it is plain.
   private func loginParams(_ username: String) async throws -> LoginParamsDTO? {
     do {
       let envelope: APIEnvelope<LoginParamsDTO> = try await api.get("auth/login-params", query: [("username", username)], anonymous: true)
-      return envelope.data ?? LoginParamsDTO(scheme: nil, kdfSalt: nil, kdfParams: nil)
+      guard let params = envelope.data else { throw Self.malformedHandshake }
+      return params
     } catch let e as AppError where e.isNotFound {
       return nil
     }
   }
 
+  /// The password goes to the server in only two cases: the handshake says `plain` in so many words, or there is
+  /// no handshake (an API from before the scheme). A 200 with no data, a `split` without its salt and recipe, or a
+  /// scheme this app has never heard of is refused, not read as plain: a malformed or tampered answer must not be
+  /// a way to be sent the password for a name this phone does not know yet.
   private func credential(username: String, password: String) async throws -> Credential {
     let params = try await loginParams(username)
     if let params, params.isSplit, let salt = params.kdfSalt, let kdf = params.kdfParams {
@@ -116,6 +123,7 @@ public final class SessionRepository {
     // This phone has signed in to this name without sending the password. A server that now asks for the
     // password itself is not the server this account was made on, or has been tampered with. Nothing is sent.
     if schemes.isKnownSplit(username) { throw Self.downgradeRefused(username) }
+    guard params == nil || params?.scheme == "plain" else { throw Self.malformedHandshake }
     return .plain(password)
   }
 
@@ -267,10 +275,18 @@ public final class SessionRepository {
     // new password means a new wrapping: in either mode, now that accounts have keys before the switch.
     // Changing the password without it would leave the key under the old one. If this phone does not hold
     // the key, the current password (just proven right) opens the server's copy.
+    // Fetched, not guessed: a failed fetch, or a key on the server that the proven-right password does not open,
+    // stops the change, because changing the password without re-wrapping would leave the key under the old
+    // one for good. Only a bundle that really has no material takes the no-key path.
     var keyPair = vault.keyPair(for: session.user.id)
-    if keyPair == nil, let m = (try? await api.get("auth/keys") as APIEnvelope<KeyBundleDTO>)?.data?.material {
-      keyPair = try? await open(m, password: current, cred: proof)
-      if let keyPair { vault.put(userId: session.user.id, keyPair: keyPair) }
+    if keyPair == nil {
+      let bundle: APIEnvelope<KeyBundleDTO> = try await api.get("auth/keys")
+      if let m = bundle.data?.material {
+        do { keyPair = try await open(m, password: current, cred: proof) } catch {
+          throw AppError.validation(["Your account's key could not be opened with the current password, so the password was not changed. Sign out and in again, then try once more."])
+        }
+        if let keyPair { vault.put(userId: session.user.id, keyPair: keyPair) }
+      }
     }
     if let keyPair {
       if split {
