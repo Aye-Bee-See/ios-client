@@ -72,6 +72,12 @@ final class DraftsTests: XCTestCase {
 
     XCTAssertEqual(drafts.load(userId: 4, prisonerId: 3)?.body, draft.body)
     XCTAssertEqual(drafts.load(userId: 4, prisonerId: 3)?.relayChapter, 2)
+    XCTAssertEqual(drafts.load(userId: 4, prisonerId: 3)?.paper, false)
+    drafts.save(userId: 4, prisonerId: 3, draft: Draft(body: "", note: nil, relayChapter: 2, paper: true))
+    XCTAssertEqual(drafts.load(userId: 4, prisonerId: 3)?.paper, true, "the switch is part of the draft (API PR #118)")
+    // A draft saved by a version from before the switch has no `paper` key and reads as an ordinary letter.
+    let older = try JSONDecoder().decode(Draft.self, from: Data(#"{"body":"Dear Jane","note":null,"relayChapter":null,"updatedAt":0}"#.utf8))
+    XCTAssertFalse(older.paper); XCTAssertEqual(older.body, "Dear Jane")
     XCTAssertNil(drafts.load(userId: 5, prisonerId: 3), "another account on the same phone never sees it")
     XCTAssertNil(drafts.load(userId: 4, prisonerId: 9))
 

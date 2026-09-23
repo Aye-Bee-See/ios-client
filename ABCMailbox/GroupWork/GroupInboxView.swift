@@ -193,14 +193,14 @@ private struct QueueRow: View {
     let pages = estimatePages(characters: letter.body.count)
     let facts: [String?] = [
       letter.createdAt.map { "Written \(Format.short($0))" },
-      "~\(Format.plural(pages, "page"))",
+      letter.paper ? nil : "~\(Format.plural(pages, "page"))", // nothing of a paper letter is printed here
       letter.attachments.isEmpty ? nil : Format.plural(letter.attachments.count, "file"),
     ]
     let row = RecordRow(
       title: item.prisoner?.name ?? "Prisoner #\(letter.prisonerId ?? 0)",
       secondary: item.prisoner?.facility.map { $0.name + ($0.country.map { ", \($0)" } ?? "") },
       subtitle: facts.compactMap { $0 }.joined(separator: " · "),
-      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.relayNote.map { "Note: \($0)" },
+      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.paper && letter.status == .printed ? "On paper, nothing to print" : letter.relayNote.map { "Note: \($0)" },
       horizontalPadding: tick == .notSelecting ? 20 : 8, action: action
     )
     if tick == .notSelecting {

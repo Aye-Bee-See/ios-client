@@ -75,14 +75,17 @@ struct ComposeView: View {
         }
         RelaySection(relay: model.relay, selected: $model.selectedRelay)
       }
+      if model.canBeOnPaper { paperSection }
 
-      TextBox(text: $model.body, placeholder: model.recordingReply ? "Type the prisoner's letter here, if you are transcribing it." : "Write your letter here. Paragraph breaks will be preserved when printed.")
-      Muted("\(model.characters) characters · ~\(Format.plural(model.pages, "page"))", font: Theme.label)
+      TextBox(text: $model.body, placeholder: model.recordingReply ? "Type the prisoner's letter here, if you are transcribing it." : model.onPaper ? "Optional: type what the letter says, if you want a copy here." : "Write your letter here. Paragraph breaks will be preserved when printed.")
+      if !model.onPaper { Muted("\(model.characters) characters · ~\(Format.plural(model.pages, "page"))", font: Theme.label) }
 
       // What the rules mean for this particular letter: warnings in red, the rest as notes.
       if !model.recordingReply {
-        ForEach(model.advice, id: \.text) { a in
-          if a.warning { AlertBanner("⚠ \(a.text)") } else { Muted(a.text) }
+        if !model.onPaper {
+          ForEach(model.advice, id: \.text) { a in
+            if a.warning { AlertBanner("⚠ \(a.text)") } else { Muted(a.text) }
+          }
         }
         noteSection
       }
@@ -91,11 +94,27 @@ struct ComposeView: View {
       ErrorText(model.error)
 
       Button(model.sendLabel) { Task { await model.send() } }.buttonStyle(.primary).disabled(!model.canSend)
-      if !model.recordingReply {
+      if let problem = model.paperGroupProblem {
+        Text(problem).font(Theme.bodyMedium).foregroundStyle(Theme.red)
+      } else if model.onPaper {
+        Muted("Nothing is printed. Hand the letter to your relay group; it goes out with their next batch, and a reply will come back to this conversation.")
+      } else if !model.recordingReply {
         Muted("Your letter won't be sent immediately. It goes to your relay group's queue, where they will print and physically mail it on your behalf.")
       }
     }
     .disabled(model.sending)
+  }
+
+  /// API PR #118: a letter written by hand and handed to the group. The record is what a reply comes back to.
+  @ViewBuilder private var paperSection: some View {
+    Toggle(isOn: $model.onPaper) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("This letter is on paper").font(Theme.bodyLarge)
+        Muted("You wrote it by hand and are handing it to your relay group to mail. Nothing is printed; a photo of the page is optional.", font: Theme.label)
+      }
+    }
+    .tint(Theme.red)
+    .accessibilityIdentifier("onPaper")
   }
 
   // No note to a relay group on a reply: it is not being mailed anywhere.
@@ -131,7 +150,7 @@ struct ComposeView: View {
         }
       }
     }
-    Muted("PDF, JPG, PNG, or WebP · max 20 MB. A scan of a handwritten letter works well.", font: Theme.label)
+    Muted(model.onPaper ? "A photo of the page, if you want a copy here. It can also be added later, from the conversation, until the group mails the letter." : "PDF, JPG, PNG, or WebP · max 20 MB. A scan of a handwritten letter works well.", font: Theme.label)
   }
 }
 

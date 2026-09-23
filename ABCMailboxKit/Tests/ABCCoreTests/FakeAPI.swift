@@ -94,7 +94,7 @@ final class FakeAPI: @unchecked Sendable {
     let isLetter = r.path == "/messaging/message"
     let fingerprint: String
     if isLetter {
-      fingerprint = "\(who)|\(r.json["prisoner"] ?? "")|\(r.json["sender"] ?? "")|\(r.json["user"] ?? "")|\(r.json["messageText"] ?? "")"
+      fingerprint = "\(who)|\(r.json["prisoner"] ?? "")|\(r.json["sender"] ?? "")|\(r.json["user"] ?? "")|\(r.json["messageText"] ?? "")|\(r.json["paper"] ?? "")"
     } else {
       let parts = Multipart(r)
       fingerprint = "\(who)|\(parts.fields["message"] ?? "")|\(parts.filename ?? "")|\(parts.file.count)"
@@ -519,11 +519,23 @@ final class FakeAPI: @unchecked Sendable {
           return .error(400, extra: ["errors": ["resendOf must be one of this writer's returned letters to the same prisoner."]])
         }
       }
+      // Paper letters (API PR #118): outgoing only, somebody must mail it, printed from birth.
+      if let paper = body["paper"], !(paper is NSNull) {
+        guard let flag = paper as? Bool else { return .error(400, extra: ["errors": ["paper must be true or false."]]) }
+        if flag, body["sender"] as? String == "prisoner" { return .error(400, extra: ["errors": ["A reply cannot be on paper: every reply already is."]]) }
+        if flag, body["relayChapter"] == nil { return .error(400, extra: ["errors": ["A paper letter needs a relay group to mail it: send relayChapter."]]) }
+      }
+      let onPaper = body["paper"] as? Bool == true
       var m = body
       m["heldReason"] = nil; m["returnReason"] = nil // read-only: nobody sets a hold by writing a letter
-      m["id"] = id(); m["chat"] = 7; m["status"] = body["sender"] as? String == "prisoner" ? "received" : "queued"
+      m["paper"] = onPaper
+      m["id"] = id(); m["chat"] = 7; m["status"] = body["sender"] as? String == "prisoner" ? "received" : onPaper ? "printed" : "queued"
+      if onPaper { m["status_history"] = [["fromStatus": NSNull(), "toStatus": "printed", "changedBy": a.id, "createdAt": "2026-09-23T10:00:00.000Z"]] }
       m["user"] = body["user"] ?? a.id; m["createdAt"] = "2026-09-19T10:00:00.000Z"; m["keep"] = false
       messages.append(m)
+      if body["sender"] as? String != "prisoner", let g = m["relayChapter"] as? Int {
+        for admin in admins(of: g) where admin.id != a.id { tellLocked(admin.id, "letter.queued", chat: 7, message: m["id"] as? Int, detail: onPaper ? ["paper": true] : nil) }
+      }
       return .data(visible(m, to: a))
 
     case ("GET", "/chat/chats"):

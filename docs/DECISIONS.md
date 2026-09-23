@@ -2,6 +2,11 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-23: a paper letter says "On paper" where a printed one says "Printed"
+
+**Context.** API PR #118: a paper letter is `printed` from birth, with nothing to print. The app shows a status chip on every letter.
+
+**Decisions.** The chip says "On paper" for a paper letter that is printed, as it says "On hold" for a held one: "Printed" would tell the writer that the group printed something, and nothing was. The card says in words that the letter was handed over, and offers the photo until the group mails it, which is the one thing the API leaves open on a printed letter. The switch is offered only for a new outgoing letter (a letter waiting in the outbox is one, and keeps its switch), and the codec drops the flag on a reply rather than let the server refuse it: a reply on paper is what every reply already is. The server refuses a paper letter without a group to mail it; the form says so and keeps Send off until a group is known (the facility's one relay group, the chosen one, or a member's own group where it relays), rather than send and be refused. The `Idempotency-Key` on the phone changes with the switch, so a typed and a paper letter to the same person are never one request, as the API's fingerprint also insists. Android had not built #118 when this was written; where it differs, one of the two should follow.
 ## 2026-09-23: the fallback to the password is gone; the person's choice replaces it
 
 **Context.** API PR #117 answered the mobile sessions' asks. On item 23 the API decided (c): every account is moved to split before `REQUIRE_SPLIT_AUTH` goes on, and a client never sends the password on its own after a refused auth key. This app had Android's one-time fallback.

@@ -1,7 +1,9 @@
 import ABCCore
 import Observation
+import PhotosUI
 import QuickLook
 import SwiftUI
+import UIKit
 
 @MainActor @Observable
 final class ThreadModel {
@@ -47,6 +49,27 @@ final class ThreadModel {
     do { openFile = try await app.container.letters.download(attachment) } catch {
       app.show(AppError.from(error).userMessage ?? "Could not download the file.")
     }
+  }
+
+  /// The letter a photo is being chosen for (API PR #118: a paper letter's photo may follow the record until it is mailed).
+  var photoFor: Int?
+
+  func attach(image: UIImage, to messageId: Int) async {
+    guard let data = image.jpegData(compressionQuality: 0.85), let staged = try? app.container.files.stage(data: data, name: "page-\(Int(Date().timeIntervalSince1970)).jpg", mimeType: "image/jpeg") else {
+      app.show("Could not read that photo."); return
+    }
+    guard staged.size <= maxAttachmentBytes else { app.container.files.discard(staged); app.show("That file is over 20 MB."); return }
+    busyMessageId = messageId
+    defer { busyMessageId = nil }
+    do {
+      _ = try await app.container.letters.upload(messageId: messageId, staged: staged)
+      app.container.files.discard(staged)
+      app.show("Photo added.")
+    } catch {
+      app.container.files.discard(staged)
+      app.show(AppError.from(error).userMessage ?? "Could not add the photo.")
+    }
+    await load()
   }
 
   /// The letter being answered and the groups that mail to where the person is held now.
@@ -95,6 +118,7 @@ final class ThreadModel {
 struct ThreadView: View {
   @State private var model: ThreadModel
   @State private var confirmDelete: Int?
+  @State private var pickedPhoto: PhotosPickerItem?
   private let app: AppModel
 
   init(app: AppModel, chatId: Int) {
@@ -116,6 +140,14 @@ struct ThreadView: View {
       Button("Keep it", role: .cancel) {}
     } message: {
       Text("It has not been printed yet, so it can still be withdrawn. This cannot be undone.")
+    }
+    .photosPicker(isPresented: Binding(get: { model.photoFor != nil }, set: { if !$0 { model.photoFor = nil } }), selection: $pickedPhoto, matching: .images)
+    .onChange(of: pickedPhoto) {
+      guard let item = pickedPhoto, let messageId = model.photoFor else { return }
+      pickedPhoto = nil; model.photoFor = nil
+      Task {
+        if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) { await model.attach(image: image, to: messageId) } else { app.show("Could not read that photo.") }
+      }
     }
     .confirmationDialog("Who should mail it?", isPresented: $model.askingForRelay, titleVisibility: .visible) {
       ForEach(model.relayQuestion?.options ?? []) { g in Button(g.name) { Task { await model.chooseRelay(g) } } }
@@ -139,7 +171,8 @@ struct ThreadView: View {
             onEdit: { app.push(.compose(ComposeRequest(prisonerId: thread.prisonerId, editMessageId: letter.id))) },
             onDelete: { confirmDelete = letter.id },
             onSendAgain: { app.push(.compose(sendAgain(letter, in: thread))) },
-            onChooseRelay: { Task { await model.askWhoMails(letter.id, prisonerId: thread.prisonerId) } }
+            onChooseRelay: { Task { await model.askWhoMails(letter.id, prisonerId: thread.prisonerId) } },
+            onAddPhoto: { model.photoFor = letter.id }
           )
           Divider().overlay(Theme.rule)
         }
@@ -209,11 +242,12 @@ struct LetterCard: View {
   let onDelete: () -> Void
   var onSendAgain: () -> Void = {}
   var onChooseRelay: () -> Void = {}
+  var onAddPhoto: () -> Void = {}
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Text(letter.fromPrisoner ? "← Received" : "→ Sent").font(Theme.titleMedium).foregroundStyle(letter.fromPrisoner ? Theme.red : Theme.ink)
+        Text(letter.fromPrisoner ? "← Received" : letter.paper ? "→ On paper" : "→ Sent").font(Theme.titleMedium).foregroundStyle(letter.fromPrisoner ? Theme.red : Theme.ink)
         if let at = letter.createdAt { Muted(Format.long(at)) }
         Spacer()
         Tag(text: letter.statusLabel)
@@ -225,6 +259,8 @@ struct LetterCard: View {
         Muted("🔒 This letter is encrypted and this device does not hold a key that opens it.")
       } else if !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         Text(letter.body).font(Theme.bodyLarge).textSelection(.enabled)
+      } else if letter.paper {
+        Muted("Written by hand and handed to \(letter.relayGroupName ?? "the relay group") to mail. No text was typed.")
       }
       if let note = letter.relayNote {
         VStack(alignment: .leading, spacing: 2) {
@@ -244,6 +280,9 @@ struct LetterCard: View {
           Button("Delete", action: onDelete).buttonStyle(.destructiveLink)
         }
         .disabled(busy)
+      } else if letter.paper, letter.canAttach, !letter.locked, mayChange {
+        // The photo of the page may follow the record until the group mails it.
+        Button(letter.attachments.isEmpty ? "Add a photo of the page" : "Add another photo", action: onAddPhoto).buttonStyle(.link).disabled(busy)
       }
     }
     .padding(.horizontal, 20).padding(.vertical, 14)
@@ -297,7 +336,7 @@ struct LetterCard: View {
       if letter.isHeld { return "" } // the hold says it, below
       if let name = letter.relayGroupName { return "Waiting for \(name) to print it" }
       return letter.relayGroupId != nil ? "Waiting for the relay group to print it" : "Queued. No relay group is assigned to this facility yet."
-    case .printed: return "Printed by \(group)\(on)"
+    case .printed: return letter.paper ? "On paper, waiting for \(group) to mail it" : "Printed by \(group)\(on)"
     case .mailed: return "Mailed by \(group)\(on)"
     case .received: return "Recorded by a support group"
     case .returned: return "Came back\(on)"

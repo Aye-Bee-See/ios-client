@@ -121,6 +121,7 @@ extension MessageDTO {
       heldReason: .from(key: heldReason),
       resendOf: resendOf,
       resentAs: (resentAs ?? []).map { Resend(id: $0.id, status: .from(key: $0.status), createdAt: $0.createdAt.instant) },
+      paper: paper ?? false,
       returnNoteOnLetter: returnNote?.nonBlank,
       returnNoteKnown: returnNoteKnown
     )
