@@ -154,11 +154,14 @@ public struct Letter: Equatable, Identifiable, Sendable {
   public var resendOf: Int? = nil
   /// For a returned letter: what was sent in its place, if anything.
   public var resentAs: [Resend] = []
+  /// Written by hand and handed to the relay group to mail (API PR #118): `printed` from birth, nothing to print,
+  /// no text unless somebody typed a transcription, and a photo of the page may follow until it is mailed.
+  public var paper = false
 
   public var isHeld: Bool { status == .queued && heldReason != nil }
   /// What the status chip says. A hold replaces "Queued": that word tells a writer a group will print the
   /// letter, and for a held one that is false, which is the whole point of telling them.
-  public var statusLabel: String { isHeld ? "On hold" : status.label }
+  public var statusLabel: String { isHeld ? "On hold" : paper && status == .printed ? "On paper" : status.label }
   /// What the group wrote when it recorded the return. Never encrypted, in any mode.
   public var returnNote: String? { history.last { $0.to == .returned }?.note }
   /// A returned letter of one's own can be sent again, once.
@@ -166,6 +169,8 @@ public struct Letter: Equatable, Identifiable, Sendable {
 
   /// The brief's rule: a writer may edit or delete only while the letter is queued.
   public var canEdit: Bool { !fromPrisoner && status == .queued }
+  /// Files follow the letter's editability, except that a paper letter's photo may follow the record until it is mailed.
+  public var canAttach: Bool { !fromPrisoner && (status == .queued || (paper && status == .printed)) }
 }
 
 public struct LastMessage: Equatable, Sendable {

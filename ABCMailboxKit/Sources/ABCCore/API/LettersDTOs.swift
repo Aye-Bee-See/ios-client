@@ -20,6 +20,8 @@ struct SendMessageRequest: Encodable {
   let relayChapter: Int?
   /// The writer's returned letter to the same prisoner that this one replaces (API PR #105). Omitted when nil.
   var resendOf: Int?
+  /// A letter written by hand and handed to the relay group to mail (API PR #118). Omitted when false.
+  var paper: Bool?
   var relayNote: String?
   var ciphertext: String?
   var nonce: String?
@@ -106,12 +108,14 @@ struct MessageDTO: Decodable {
   let heldReason: String?
   let resendOf: Int?
   let resentAs: [ResentAsDTO]?
+  /// API PR #118: on paper from birth, `printed` from birth, nothing to print.
+  let paper: Bool?
   /// With `full=true` since API PR #111: who the letter goes to, with the facility, its address and its rules.
   let prisonerDetails: PrisonerDTO?
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
-    case returnReason, heldReason, resendOf
+    case returnReason, heldReason, resendOf, paper
     case resentAs = "resent_as", prisonerDetails = "prisoner_details"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"

@@ -18,6 +18,9 @@ final class ComposeModel {
   var note = "" { didSet { if note != oldValue { edited() } } }
   var selectedRelay: Int? { didSet { if selectedRelay != oldValue { edited() } } }
   var showNote = false
+  /// The letter was written by hand and handed to the relay group to mail (API PR #118). Nothing is printed; a
+  /// transcription is optional; a photo of the page may be attached now or later, until the group mails it.
+  var onPaper = false { didSet { if onPaper != oldValue { edited() } } }
   private(set) var prisoner: Prisoner?
   private(set) var facility: Facility?
   private(set) var relay: RelayChoice = .direct
@@ -67,7 +70,9 @@ final class ComposeModel {
   }
 
   var title: String { recordingReply ? "Record a reply" : editing ? "Edit letter" : "New letter" }
-  var sendLabel: String { progress ?? (recordingReply ? "Save reply" : editing ? "Save changes" : "Send letter") }
+  var sendLabel: String { progress ?? (recordingReply ? "Save reply" : editing ? "Save changes" : onPaper ? "Log the paper letter" : "Send letter") }
+  /// A paper letter can be chosen for a new outgoing letter only: never for a reply, and never on an edit (the API ignores it).
+  var canBeOnPaper: Bool { !recordingReply && !editing && request.outboxId == nil }
   var characters: Int { body.count }
   var pages: Int { estimatePages(characters: characters) }
   private var mailRules: MailRules { facility?.rules ?? MailRules() }
@@ -85,7 +90,8 @@ final class ComposeModel {
   // A recorded reply is not mailed anywhere, so the facility's routing cannot block it.
   var canSend: Bool {
     !loading && !sending && (recordingReply || (!relayIsBlocked && !needsRelayChoice))
-      && (!body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+      // A paper letter needs no text and no file: the record is the point.
+      && (onPaper || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
   }
 
   func load() async {
@@ -219,7 +225,7 @@ final class ComposeModel {
           asWriterId: request.replyForUserId ?? request.writerId, fromPrisoner: recordingReply,
           // End-to-end: the server lets a group hold an envelope where it relays for the facility (or manages the writer).
           groupRelaysFacility: staffGroupId.map { id in facility?.relayGroups.contains { $0.id == id } == true } ?? false,
-          idempotencyKey: keyForThisLetter(), resendOf: request.resendOf
+          idempotencyKey: keyForThisLetter(), resendOf: request.resendOf, paper: onPaper && canBeOnPaper
         )
         do {
           let created = try await letters.send(letter)
@@ -264,6 +270,8 @@ final class ComposeModel {
   }
 
   private func keyForThisLetter() -> String {
+    // The key covers the letter as it is: on paper or typed is part of that (the API's fingerprint includes `paper`).
+    let body = (onPaper ? "paper:" : "") + body
     if let sendKey, sendKey.body == body { return sendKey.key }
     let fresh = UUID().uuidString
     sendKey = (fresh, body)

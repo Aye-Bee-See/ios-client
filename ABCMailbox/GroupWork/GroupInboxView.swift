@@ -200,7 +200,7 @@ private struct QueueRow: View {
       title: item.prisoner?.name ?? "Prisoner #\(letter.prisonerId ?? 0)",
       secondary: item.prisoner?.facility.map { $0.name + ($0.country.map { ", \($0)" } ?? "") },
       subtitle: facts.compactMap { $0 }.joined(separator: " · "),
-      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.relayNote.map { "Note: \($0)" },
+      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.paper && letter.status == .printed ? "On paper, nothing to print" : letter.relayNote.map { "Note: \($0)" },
       horizontalPadding: tick == .notSelecting ? 20 : 8, action: action
     )
     if tick == .notSelecting {

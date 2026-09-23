@@ -20,6 +20,8 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case groupKeyRotated
     case groupOwner(me: Bool)
     case groupWaiting
+    /// API PR #118: a paper letter for the group's next batch. Nothing to print.
+    case paperForGroup
 
     /// The loaded group key may have changed hands or owners: the phone reloads it, so a copy handed or withdrawn takes effect without a sign-out.
     public var concernsGroupKey: Bool {
@@ -62,6 +64,7 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case .groupOwner(true): return "You are now your group's group-owner admin."
     case .groupOwner(false): return "Your group has a new group-owner admin."
     case .groupWaiting: return "A group admin is waiting to be handed the group key."
+    case .paperForGroup: return "A paper letter is waiting to go out with your group's next batch."
     case .queuedForGroup: return "A letter is waiting for your group to print it."
     case .changeApproved: return "A change you proposed to the directory was approved."
     case .changeRejected: return "A change you proposed to the directory was not accepted."
@@ -78,8 +81,9 @@ public struct Activity: Equatable, Identifiable, Sendable {
   }
 
   /// `me` is the signed-in account, so that a key handed to it, or the role given to it, reads as "you".
-  static func kind(event: String, status: String?, held: Int = 0, action: String? = nil, member: Int? = nil, owner: Int? = nil, me: Int? = nil) -> Kind {
+  static func kind(event: String, status: String?, held: Int = 0, action: String? = nil, member: Int? = nil, owner: Int? = nil, me: Int? = nil, paper: Bool = false) -> Kind {
     switch (event, status) {
+    case ("letter.queued", _) where paper: return .paperForGroup
     case ("group.key", _):
       switch action {
       case "set": return .groupKeySet

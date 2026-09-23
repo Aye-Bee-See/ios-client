@@ -66,7 +66,9 @@ public final class ActivityRepository {
       var member: Int?, owner: Int?
       if case .number(let n)? = e.detail?["member"] { member = Int(n) }
       if case .number(let n)? = e.detail?["owner"] { owner = Int(n) }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user), chatId: e.chat, messageId: e.message, count: count)
+      var paper = false
+      if case .bool(let b)? = e.detail?["paper"] { paper = b }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user, paper: paper), chatId: e.chat, messageId: e.message, count: count)
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
     if fresh.contains(where: \.kind.concernsGroupKey) { await onGroupKeyChange?() }

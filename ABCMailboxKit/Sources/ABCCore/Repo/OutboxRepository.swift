@@ -30,9 +30,11 @@ public struct OutboxPayload: Codable, Equatable, Sendable {
   public let idempotencyKey: String
   /// Optional so that letters queued by a version from before API PR #105 still open.
   public var resendOf: Int? = nil
+  /// Optional so that letters queued by a version from before API PR #118 still open.
+  public var paper: Bool? = nil
 
   var newLetter: NewLetter {
-    NewLetter(prisonerId: prisonerId, body: body, relayNote: relayNote, relayChapter: relayChapter, asWriterId: asWriterId, fromPrisoner: fromPrisoner, groupRelaysFacility: groupRelaysFacility, idempotencyKey: idempotencyKey, resendOf: resendOf)
+    NewLetter(prisonerId: prisonerId, body: body, relayNote: relayNote, relayChapter: relayChapter, asWriterId: asWriterId, fromPrisoner: fromPrisoner, groupRelaysFacility: groupRelaysFacility, idempotencyKey: idempotencyKey, resendOf: resendOf, paper: paper ?? false)
   }
 }
 
@@ -166,7 +168,7 @@ public final class OutboxRepository {
     let payload = OutboxPayload(
       prisonerId: letter.prisonerId, prisonerName: prisonerName, writingAs: writingAs, body: letter.body, relayNote: letter.relayNote, relayChapter: letter.relayChapter,
       asWriterId: letter.asWriterId, fromPrisoner: letter.fromPrisoner, groupRelaysFacility: letter.groupRelaysFacility, attachments: stored,
-      idempotencyKey: letter.idempotencyKey ?? UUID().uuidString, resendOf: letter.resendOf
+      idempotencyKey: letter.idempotencyKey ?? UUID().uuidString, resendOf: letter.resendOf, paper: letter.paper ? true : nil
     )
     write(Entry(id: id, payload: payload, queuedAt: Date()), userId)
     reload()

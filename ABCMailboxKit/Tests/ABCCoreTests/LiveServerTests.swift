@@ -561,4 +561,58 @@ final class LiveServerTests: XCTestCase {
     let samsPreview = await sam.accountDeletion.preview()
     XCTAssertFalse(samsPreview.isOwnerWithOtherAdmins)
   }
+
+  /// Paper letters (API PR #118) on an end-to-end server: logged with no text, printed from birth, the photo
+  /// follows and is readable by the group, never in the print queue, mailed with the batch, then fixed.
+  ///
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerPaperLetters
+  func testThrowawayServerPaperLetters() async throws {
+    let member = try container("ABC_LIVE_THROWAWAY"), writer = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use") }
+    await member.modes.refresh(); await writer.modes.refresh()
+    try XCTSkipIf(member.modes.mode != .e2e, "written for an end-to-end server")
+    try await member.sessions.login(username: "member1", password: "password1")
+    member.sessions.recoveryCodeSaved()
+    _ = await member.group.setUpKeys()
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    try await writer.sessions.login(username: "user1", password: "password1")
+    writer.sessions.recoveryCodeSaved()
+    await member.activity.sync()
+
+    let logged = try await writer.letters.send(NewLetter(prisonerId: 1, body: "", relayNote: nil, relayChapter: groupId, groupRelaysFacility: true, paper: true))
+    print("live #118: logged letter \(logged.id): status \(logged.status), paper \(logged.paper), history \(logged.history.map { "\($0.from.map(\.key) ?? "nil")>\($0.to.key)" })")
+    XCTAssertTrue(logged.paper); XCTAssertEqual(logged.status, .printed); XCTAssertTrue(logged.canAttach); XCTAssertFalse(logged.canEdit)
+    XCTAssertEqual(logged.history.first?.from, nil)
+
+    let page = Data("not really a jpeg, but bytes the server does not look at".utf8)
+    let staged = try writer.files.stage(data: page, name: "page.jpg", mimeType: "image/jpeg")
+    let photo = try await writer.letters.upload(messageId: logged.id, staged: staged)
+    XCTAssertNotNil(photo.nonce)
+    let news = await member.activity.sync()
+    print("live #118: the group's feed says: \(news.map(\.sentence))")
+    XCTAssertTrue(news.contains { $0.kind == .paperForGroup })
+    let queued = try await member.group.queue(groupId: groupId, status: .queued, page: 1, pageSize: 100)
+    XCTAssertFalse(queued.items.contains { $0.id == logged.id }, "never in the print queue")
+    let printed = try await member.group.queue(groupId: groupId, status: .printed, page: 1, pageSize: 100)
+    let theirs = try XCTUnwrap(printed.items.first { $0.id == logged.id })
+    XCTAssertTrue(theirs.letter.paper)
+    // A list row does not carry a letter's files; the single read does.
+    let full = try await member.group.queueItem(messageId: logged.id)
+    let attached = try XCTUnwrap(full.letter.attachments.first, "the photo, on the letter the group reads")
+    let opened = try await member.letters.download(attached)
+    XCTAssertEqual(try Data(contentsOf: opened), page, "the group opens the photo with the letter's key")
+
+    let moved = try await member.group.setStatusOfMany(messageIds: [logged.id], status: .mailed)
+    XCTAssertEqual(moved, 1)
+    let mailed = try await writer.letters.letter(messageId: logged.id)
+    XCTAssertEqual(mailed.status, .mailed); XCTAssertFalse(mailed.canAttach)
+    let again = try writer.files.stage(data: page, name: "late.jpg", mimeType: "image/jpeg")
+    await assertThrowsAppError(try await writer.letters.upload(messageId: logged.id, staged: again)) {
+      print("live #118: a photo after mailing is refused: \($0)")
+    }
+    // A reply on paper is refused by the API too (the codec never sends the flag on a reply, so ask the server directly).
+    let writerScheme = try await scheme(base, "user1")
+    XCTAssertEqual(writerScheme, "split", "under the flag")
+  }
 }

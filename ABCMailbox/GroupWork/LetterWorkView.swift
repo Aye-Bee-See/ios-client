@@ -150,6 +150,7 @@ struct LetterWorkView: View {
         if let at = letter.createdAt { Muted("Written \(Format.long(at))") }
       }
       if let reason = letter.heldReason, letter.isHeld { AlertBanner(Self.heldText(reason)) }
+      if letter.paper, letter.status == .printed { AlertBanner("On paper: the writer handed this letter to your group already. Nothing to print; it goes out with the batch.") }
       envelope(letter, p)
       if let note = letter.relayNote { AlertBanner("Note from the writer: \(note)") }
       if let f = p?.facility {
@@ -161,11 +162,11 @@ struct LetterWorkView: View {
       if letter.locked {
         Muted("🔒 This letter is encrypted and this device does not hold a key that opens it.", font: Theme.bodyLarge)
       } else {
-        Text(letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "(No text. See the attached file.)" : letter.body).font(Theme.bodyLarge).textSelection(.enabled)
+        Text(letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (letter.paper ? "(On paper. No transcription was typed.)" : "(No text. See the attached file.)") : letter.body).font(Theme.bodyLarge).textSelection(.enabled)
       }
       ForEach(letter.attachments) { a in AttachmentRow(attachment: a) { Task { await model.open(a) } } }
 
-      if !letter.locked, !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      if !letter.locked, !letter.paper, !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         Button("Print the letter") { PrintLetter.print(jobName: "Letter to \(p?.name ?? "prisoner")", body: letter.body) }.buttonStyle(.outlineWide)
       }
       switch letter.status {

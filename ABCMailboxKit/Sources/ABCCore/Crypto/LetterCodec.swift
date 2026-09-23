@@ -19,8 +19,10 @@ public struct NewLetter: Sendable {
   /// The writer's returned letter that this one is sent in place of (API PR #105). The server keeps no copy
   /// to send again (in end-to-end mode it could not read one), so the text travels again from here.
   public let resendOf: Int?
+  /// Written by hand and handed to the relay group (API PR #118): no text needed, `printed` from birth.
+  public let paper: Bool
 
-  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false, idempotencyKey: String? = nil, resendOf: Int? = nil) {
+  public init(prisonerId: Int, body: String, relayNote: String?, relayChapter: Int?, asWriterId: Int? = nil, fromPrisoner: Bool = false, groupRelaysFacility: Bool = false, idempotencyKey: String? = nil, resendOf: Int? = nil, paper: Bool = false) {
     self.prisonerId = prisonerId
     self.body = body
     self.relayNote = relayNote
@@ -30,6 +32,7 @@ public struct NewLetter: Sendable {
     self.groupRelaysFacility = groupRelaysFacility
     self.idempotencyKey = idempotencyKey
     self.resendOf = resendOf
+    self.paper = paper
   }
 }
 
@@ -87,8 +90,11 @@ final class LetterCodec {
     let relayChapter = letter.fromPrisoner ? nil : letter.relayChapter
     let note = letter.fromPrisoner ? nil : letter.relayNote?.nonBlank
     var request = SendMessageRequest(prisoner: letter.prisonerId, sender: sender, user: letter.asWriterId, relayChapter: relayChapter, resendOf: letter.fromPrisoner ? nil : letter.resendOf)
+    // A reply on paper is what every reply already is: the flag goes only with an outgoing letter.
+    if letter.paper, !letter.fromPrisoner { request.paper = true }
     guard await isEndToEnd() else {
-      request.messageText = letter.body
+      // A paper letter needs no text; a transcription, if typed, travels like any body.
+      request.messageText = letter.paper && letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : letter.body
       request.relayNote = note
       return (request, nil)
     }
