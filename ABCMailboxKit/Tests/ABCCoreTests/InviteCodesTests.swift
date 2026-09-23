@@ -19,7 +19,9 @@ final class InviteCodesTests: XCTestCase {
     let fake = fake!
     member = TestApp { fake.handle($0) }
     newcomer = TestApp { fake.handle($0) }
-    try await member.container.sessions.login(username: "member1", password: "password1")
+    // The fake's member1 is an account from before the flag; without the automatic fallback (API PR #117) it is
+    // signed in by the person's explicit choice, as on the sign-in screen.
+    try await member.container.sessions.login(username: "member1", password: "password1", olderAccount: true)
   }
 
   func testACodeIsReadTheWayTheServerReadsItAndCheckedBeforeAnyRequest() throws {

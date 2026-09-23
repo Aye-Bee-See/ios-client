@@ -5,6 +5,25 @@ public struct Session: Codable, Equatable, Sendable {
   public var token: String
   public var expiresAtMillis: Double
   public let user: SessionUser
+  /// The person chose "sign in with the password itself" for an account from before the split scheme (API PR
+  /// #117, item 23). A later proof of the password (a change, a deletion, an unlock) goes the same way. False
+  /// again once a password change has moved the account to split.
+  public var olderAccount = false
+
+  public init(token: String, expiresAtMillis: Double, user: SessionUser, olderAccount: Bool = false) {
+    self.token = token; self.expiresAtMillis = expiresAtMillis; self.user = user; self.olderAccount = olderAccount
+  }
+
+  private enum CodingKeys: String, CodingKey { case token, expiresAtMillis, user, olderAccount }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    token = try c.decode(String.self, forKey: .token)
+    expiresAtMillis = try c.decode(Double.self, forKey: .expiresAtMillis)
+    user = try c.decode(SessionUser.self, forKey: .user)
+    // A session stored by a version from before this field.
+    olderAccount = try c.decodeIfPresent(Bool.self, forKey: .olderAccount) ?? false
+  }
 }
 
 public struct SessionUser: Codable, Equatable, Sendable {

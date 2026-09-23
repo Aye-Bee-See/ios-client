@@ -52,7 +52,7 @@ public final class AppContainer {
 
     modes = EncryptionModeRepository(api: api)
     vault = KeyVault(store: secrets)
-    schemes = SchemeMemory(defaults: defaults)
+    schemes = SchemeMemory(defaults: defaults, server: holder)
     sessions = SessionRepository(secrets: secrets, api: api, cache: cache, modes: modes, engine: engine, vault: vault, schemes: schemes)
     keyring = GroupKeyring(modes: modes, sessions: sessions, vault: vault, api: api)
     let codec = LetterCodec(modes: modes, vault: vault, sessions: sessions, api: api, keyring: keyring)

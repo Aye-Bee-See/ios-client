@@ -131,31 +131,37 @@ public final class SessionRepository {
   private func splitSupported(_ username: String) async throws -> Bool { try await loginParams(username) != nil }
 
   /// `POST /auth/login` with the credential the handshake calls for, and the answer with the credential the
-  /// server accepted. Once REQUIRE_SPLIT_AUTH is on, the server says "split" for every name so as to say
-  /// nothing about any of them, and an account made before the scheme can only sign in with the password
-  /// itself. So a refused auth key is followed, once, by the password, but only for a name this phone has
-  /// never known as split: for a known one the refusal stands, and the password stays here.
-  private func signIn(_ name: String, password: String) async throws -> (LoginData, Credential) {
-    let cred = try await credential(username: name, password: password)
+  /// server accepted. The API decided (its brief, item 23): every account is moved to split before
+  /// REQUIRE_SPLIT_AUTH goes on, and a client never sends the password on its own after a refused auth key.
+  /// An account from before signs in only by the person's explicit choice (`olderAccount`), which sends the
+  /// password as it is, once, by that choice; and even then never for a name this phone knows as split.
+  private func signIn(_ name: String, password: String, olderAccount: Bool = false) async throws -> (LoginData, Credential) {
+    let cred: Credential
+    if olderAccount {
+      if schemes.isKnownSplit(name) { throw Self.downgradeRefused(name) }
+      cred = .plain(password)
+    } else {
+      cred = try await credential(username: name, password: password)
+    }
     do {
       let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: name, password: cred.serverPassword))
       return (try envelope.required("login response"), cred)
-    } catch let e as AppError where e.isUnauthorized && cred.isSplit && !schemes.isKnownSplit(name) {
-      cred.wipe()
-      let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login", body: LoginRequest(username: name, password: password))
-      return (try envelope.required("login response"), .plain(password))
     } catch {
       cred.wipe()
       throw error
     }
   }
 
+  /// `olderAccount`: the person chose "sign in with the password itself", for an account made before the split
+  /// scheme on a server that now calls every name split. Not a feature, an escape hatch: the app never sends
+  /// the password on its own.
   @discardableResult
-  public func login(username: String, password: String) async throws -> Session {
+  public func login(username: String, password: String, olderAccount: Bool = false) async throws -> Session {
     let name = username.trimmed
-    let (response, cred) = try await signIn(name, password: password)
+    let (response, cred) = try await signIn(name, password: password, olderAccount: olderAccount)
     defer { cred.wipe() }
-    let session = response.toSession()
+    var session = response.toSession()
+    session.olderAccount = olderAccount
     // A different account signing in over a live one must not inherit its keys.
     if let current = state.user, current.id != session.user.id { forgetLocally() }
     adopt(session)
@@ -349,13 +355,15 @@ public final class SessionRepository {
     }
     let envelope: APIEnvelope<UpdateUserData> = try await api.send("PUT", "auth/user", body: request)
     if split { schemes.rememberSplit(name) }
-    // Every older token (including the one just used) is dead now; keep this device signed in.
+    // Every older token (including the one just used) is dead now; keep this device signed in. Moved to split,
+    // the account is no longer one from before: the next proof of the password goes through the handshake.
+    var kept = session
+    if split { kept.olderAccount = false }
     if let fresh = envelope.data?.token {
-      var kept = session
       kept.token = fresh.token
       kept.expiresAtMillis = fresh.expires
-      adopt(kept)
     }
+    if kept != session { adopt(kept) }
   }
 
   /// Fetches the key bundle and unwraps it with the password: split, through the wrap key derived beside the auth key.
@@ -363,17 +371,12 @@ public final class SessionRepository {
     guard let session = state.session else { throw AppError.unauthorized("You are signed out.") }
     let envelope: APIEnvelope<KeyBundleDTO> = try await api.get("auth/keys")
     guard let m = envelope.data?.material else { throw AppError.validation(["This account has no keys yet. Sign out and sign in again to set them up."]) }
-    let cred = try await credential(username: session.user.username, password: password)
+    // The session's own way decides: an account signed in as one from before has its key wrapped under the password itself.
+    let cred: Credential = session.olderAccount ? .plain(password) : try await credential(username: session.user.username, password: password)
     defer { cred.wipe() }
     do {
       vault.put(userId: session.user.id, keyPair: try await open(m, password: password, cred: cred))
     } catch {
-      // Under REQUIRE_SPLIT_AUTH the handshake calls every name split; an account from before has its key
-      // under the password itself. As at sign-in: the password, once, for a name this phone has never known as split.
-      if cred.isSplit, !schemes.isKnownSplit(session.user.username), let keyPair = try? await open(m, password: password, cred: .plain(password)) {
-        vault.put(userId: session.user.id, keyPair: keyPair)
-        return
-      }
       throw AppError.validation(["That password does not open your letters."])
     }
   }
@@ -415,11 +418,12 @@ public final class SessionRepository {
     return true
   }
 
-  /// The credential the server accepted for `password`, or nil when it refused it. The caller wipes it.
+  /// The credential the server accepted for `password`, or nil when it refused it. The caller wipes it. The
+  /// session's own way decides: an account signed in as one from before proves itself with the password.
   private func prove(_ password: String) async throws -> Credential? {
-    guard let user = state.user else { throw AppError.unauthorized("You are signed out.") }
+    guard let session = state.session else { throw AppError.unauthorized("You are signed out.") }
     do {
-      return try await signIn(user.username, password: password).1
+      return try await signIn(session.user.username, password: password, olderAccount: session.olderAccount).1
     } catch let e as AppError where e.isUnauthorized {
       return nil
     }

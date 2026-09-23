@@ -55,11 +55,25 @@ final class ReturnedAndHeldTests: XCTestCase {
     let afterwards = try await writer.container.letters.letter(messageId: letter.id)
     XCTAssertEqual(afterwards.resentAs.map(\.id), [again.id]); XCTAssertFalse(afterwards.canSendAgain)
 
-    // The conversation screen reads the thread, whose letters carry neither the history nor `resent_as`
-    // (seen on the simulator: the note was missing). Both are filled in.
+    // The conversation screen reads the thread. Since API PR #117 the note is on the letter itself, so no letter is
+    // read by itself for it; `resent_as` is still rebuilt from the sibling letters' `resendOf`.
+    let reads = writer.requests(to: "/messaging/message", method: "GET").count
     let thread = try await writer.container.letters.thread(chatId: 3)
     let inThread = try XCTUnwrap(thread.letters.first { $0.id == letter.id })
     XCTAssertEqual(inThread.returnNote, "Stamped NOT HERE"); XCTAssertEqual(inThread.resentAs.map(\.id), [again.id]); XCTAssertFalse(inThread.canSendAgain)
+    XCTAssertEqual(writer.requests(to: "/messaging/message", method: "GET").count, reads, "the note came with the conversation")
+    // Three states on the API: absent (an older API), null (no note given), a string. Only the first calls for a read.
+    let old = try JSONDecoder().decode(MessageDTO.self, from: Data(#"{"id":41,"sender":"user","prisoner":3,"status":"returned","returnReason":"refused"}"#.utf8)).toDomain()
+    XCTAssertNil(old.returnNote); XCTAssertFalse(old.returnNoteKnown)
+    let none = try JSONDecoder().decode(MessageDTO.self, from: Data(#"{"id":41,"sender":"user","prisoner":3,"status":"returned","returnReason":"refused","returnNote":null}"#.utf8)).toDomain()
+    XCTAssertNil(none.returnNote); XCTAssertTrue(none.returnNoteKnown, "the API said: no note")
+    // A returned letter with no note, on a current API: the conversation is read once, nothing more.
+    let quiet = try await mailed("Returned without a note")
+    _ = try await member.container.group.markReturned(messageId: quiet.id, reason: .unknown, note: nil)
+    let readsBefore = writer.requests(to: "/messaging/message", method: "GET").count
+    let threadAgain = try await writer.container.letters.thread(chatId: 3)
+    XCTAssertNil(try XCTUnwrap(threadAgain.letters.first { $0.id == quiet.id }).returnNote)
+    XCTAssertEqual(writer.requests(to: "/messaging/message", method: "GET").count, readsBefore, "no history read for a null note")
   }
 
   func testOnlyAReturnedLetterOfOnesOwnCanBeSentAgain() async throws {
@@ -87,6 +101,12 @@ final class ReturnedAndHeldTests: XCTestCase {
     XCTAssertEqual(news.first?.sentence, "Someone you write to has been released. A letter you wrote them is waiting for you.")
     let mine = try await writer.container.letters.letter(messageId: sent.id)
     XCTAssertEqual(mine.statusLabel, "On hold", "not Queued: nobody is going to print it as things stand")
+    // The conversation list says so on the row (API PR #117), and which side it waits on.
+    let rows = try await writer.container.letters.threads(page: 1, pageSize: 20)
+    let row = try XCTUnwrap(rows.items.first { $0.prisonerId == 3 })
+    XCTAssertEqual(row.heldCount, 1); XCTAssertEqual(row.heldReasons, [.prisonerFree]); XCTAssertFalse(row.waitsOnWriter, "freed waits on the group")
+    let full = try await writer.container.letters.thread(chatId: 3)
+    XCTAssertEqual(full.heldCount, 1)
     XCTAssertEqual(mine.heldReason, .prisonerFree); XCTAssertTrue(mine.isHeld); XCTAssertTrue(mine.canEdit, "held is not a status: the letter is still queued, and still the writer's to withdraw")
 
     let group = member.container.group
@@ -115,6 +135,8 @@ final class ReturnedAndHeldTests: XCTestCase {
     fake.directoryLearns(prisoner: 3, event: "prisoner.moved", holding: "choose_relay")
     let news = await writer.container.activity.sync()
     XCTAssertEqual(news.map(\.kind), [.moved(held: 1)])
+    let rows = try await writer.container.letters.threads(page: 1, pageSize: 20)
+    XCTAssertTrue(try XCTUnwrap(rows.items.first { $0.prisonerId == 3 }).waitsOnWriter, "choose_relay waits on the writer")
 
     try await writer.container.letters.chooseRelay(messageId: sent.id, groupId: 2)
     XCTAssertEqual(try XCTUnwrap(writer.requests(to: "/messaging/message", method: "PUT").last).json as NSDictionary, ["id": sent.id, "relayChapter": 2])

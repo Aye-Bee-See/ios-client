@@ -43,6 +43,11 @@ final class SplitSignInTests: XCTestCase {
     XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, kp.privateKey, "opened with the wrap key of that sign-in")
     XCTAssertFalse(sessions.keysLocked)
     XCTAssertTrue(app.container.schemes.isKnownSplit(" User1 "), "remembered, whatever the case")
+    // Per server: the same name on a development server the app is pointed at is another account.
+    _ = try await app.container.devServer.set("http://192.168.1.20:3000/")
+    XCTAssertFalse(app.container.schemes.isKnownSplit("user1"), "not known on the other server")
+    await app.container.devServer.reset()
+    XCTAssertTrue(app.container.schemes.isKnownSplit("user1"), "and still known on this one")
   }
 
   func testAnOlderAPIWithoutTheHandshakeIsPlainEverywhere() async throws {
@@ -109,31 +114,43 @@ final class SplitSignInTests: XCTestCase {
     XCTAssertEqual(try AccountKeys.unlockWithWrapKey(publicKey: account.keys["publicKey"] as! String, wrapped: fake.accounts[0].keys["wrappedPrivateKey"] as! String, wrapKey: again.wrapKey).privateKey, kp.privateKey)
   }
 
-  func testUnderTheFlagAnAccountFromBeforeSignsInByTheFallbackOnceAndAKnownSplitOneDoesNot() async throws {
+  func testUnderTheFlagThePasswordIsNeverSentOnTheAppsOwnAndAnAccountFromBeforeSignsInOnlyByThePersonsChoice() async throws {
     fake.requireSplitAuth = true
     fake.accounts = [FakeAPI.Account(id: 4, username: "olduser", password: password)]
-    // The handshake calls every name split. The auth key is refused; the password follows, once.
-    try await sessions.login(username: "olduser", password: password)
-    let sent = sentPasswords()
-    XCTAssertEqual(sent.count, 2); XCTAssertEqual(sent[0].count, 44); XCTAssertEqual(sent[1], password)
-    XCTAssertFalse(app.container.schemes.isKnownSplit("olduser"), "the fallback is not a split sign-in")
+    // The handshake calls every name split. The auth key is refused, and that is the end of it: no fallback (API PR #117, item 23).
+    await assertThrowsAppError(try await sessions.login(username: "olduser", password: password)) { XCTAssertTrue($0.isUnauthorized) }
+    XCTAssertEqual(sentPasswords().map(\.count), [44], "one request, and not the password")
+
+    // The person's explicit choice sends the password as it is, once, and the session remembers the way.
+    try await sessions.login(username: "olduser", password: password, olderAccount: true)
+    XCTAssertEqual(sentPasswords().last, password)
+    XCTAssertTrue(sessions.state.session?.olderAccount == true)
+    XCTAssertFalse(app.container.schemes.isKnownSplit("olduser"), "not a split sign-in")
     XCTAssertNotNil(app.container.vault.keyPair(for: 4), "keys were made at that sign-in, plain, under the password")
+    let key = try Data(XCTUnwrap(app.container.vault.keyPair(for: 4)).privateKey)
     let k = fake.accounts[0].keys
     _ = try AccountKeys.unlockWithPassword(publicKey: k["publicKey"] as! String, wrapped: k["wrappedPrivateKey"] as! String, password: password, salt: k["kdfSalt"] as! String, params: .standard)
 
-    // A wrong password on such an account costs two refusals and reaches the server in plain (Android's ask 23).
-    try await sessions.logout()
-    await assertThrowsAppError(try await sessions.login(username: "olduser", password: "not it")) { XCTAssertTrue($0.isUnauthorized) }
-    XCTAssertEqual(sentPasswords().count, 4)
-
-    // A name this phone knows as split gets no fallback: a refused auth key is a wrong password, and the password stays here.
-    let (account, _) = try splitAccount(id: 5, username: "newuser")
-    fake.accounts.append(account)
-    try await sessions.login(username: "newuser", password: password)
-    try await sessions.logout()
+    // A later proof goes the same way: unlocking on a phone without the key, and proving for a change.
+    app.container.vault.clear()
     let before = sentPasswords().count
-    await assertThrowsAppError(try await sessions.login(username: "newuser", password: "not it")) { XCTAssertTrue($0.isUnauthorized) }
-    XCTAssertEqual(sentPasswords().count, before + 1)
+    try await sessions.unlock(password: password)
+    XCTAssertEqual(app.container.vault.keyPair(for: 4)?.privateKey, key); XCTAssertEqual(sentPasswords().count, before, "unlocking sends nothing")
+    try await sessions.changePassword(current: password, new: "A different passphrase")
+    XCTAssertEqual(sentPasswords()[before], password, "the proof, by the remembered choice")
+    XCTAssertEqual(fake.accounts[0].authScheme, "split", "moved to split by the change")
+    XCTAssertFalse(sessions.state.session?.olderAccount == true, "and no longer an account from before")
+    XCTAssertTrue(app.container.schemes.isKnownSplit("olduser"))
+    // The stored session is read back with the flag, and a session stored before the flag existed reads as false.
+    XCTAssertEqual(try JSONDecoder().decode(Session.self, from: Data(#"{"token":"t","expiresAtMillis":1,"user":{"id":4,"username":"olduser","role":"user"}}"#.utf8)).olderAccount, false)
+
+    // The choice is refused for a name this phone knows as split, and nothing is sent.
+    try await sessions.logout()
+    let count = sentPasswords().count
+    await assertThrowsAppError(try await sessions.login(username: "olduser", password: "A different passphrase", olderAccount: true)) { XCTAssertEqual($0, SessionRepository.downgradeRefused("olduser")) }
+    XCTAssertEqual(sentPasswords().count, count)
+    // And the ordinary way now works with one derivation.
+    try await sessions.login(username: "olduser", password: "A different passphrase")
     XCTAssertEqual(sentPasswords().last?.count, 44)
   }
 
@@ -212,6 +229,17 @@ final class SplitSignInTests: XCTestCase {
     XCTAssertEqual(delete.json["password"] as? String, account.password)
     XCTAssertFalse(app.requests.contains { $0.bodyText.contains(password) })
     XCTAssertFalse(sessions.state.isSignedIn)
+  }
+
+  func testAWrongPasswordForAKnownSplitNameIsOneRefusal() async throws {
+    fake.requireSplitAuth = true
+    let (account, _) = try splitAccount(id: 5, username: "newuser")
+    fake.accounts = [account]
+    try await sessions.login(username: "newuser", password: password)
+    try await sessions.logout()
+    let before = sentPasswords().count
+    await assertThrowsAppError(try await sessions.login(username: "newuser", password: "not it")) { XCTAssertTrue($0.isUnauthorized) }
+    XCTAssertEqual(sentPasswords().count, before + 1); XCTAssertEqual(sentPasswords().last?.count, 44)
   }
 
   func testUnlockingOnAPhoneWithoutTheKeyUsesTheWrapKey() async throws {
