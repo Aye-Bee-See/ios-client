@@ -27,6 +27,9 @@ final class LoginModel {
   var username = ""
   var password = ""
   var showPassword = false
+  /// The person's explicit choice for an account from before the split scheme (API PR #117, item 23): the
+  /// password itself is sent, once, by that choice. The app never sends it on its own.
+  var olderAccount = false
   private(set) var submitting = false
   private(set) var error: String?
 
@@ -43,8 +46,8 @@ final class LoginModel {
     error = nil
     defer { submitting = false }
     do {
-      try await app.sessions.login(username: username, password: password)
-      password = ""
+      try await app.sessions.login(username: username, password: password, olderAccount: olderAccount)
+      password = ""; olderAccount = false
       app.authFinished()
     } catch {
       self.error = Self.message(.from(error))
@@ -90,6 +93,10 @@ struct LoginView: View {
         .focused($focus, equals: .password).submitLabel(.go)
         .accessibilityIdentifier("password")
       ErrorText(model.error).accessibilityIdentifier("error")
+      // Not a feature, an escape hatch: the API moves every account to the split scheme before it stops telling
+      // accounts apart, so this is for the odd one that was not.
+      CheckboxRow(text: "This is an account from before the app stopped sending passwords: sign in with the password itself. Only if a superadmin told you to.", isOn: $model.olderAccount)
+        .accessibilityIdentifier("olderAccount")
 
       Button { Task { await model.submit() } } label: {
         if model.submitting { ProgressView().tint(Theme.paper) } else { Text("Sign in") }

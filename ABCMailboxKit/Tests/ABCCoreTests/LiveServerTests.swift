@@ -561,4 +561,64 @@ final class LiveServerTests: XCTestCase {
     let samsPreview = await sam.accountDeletion.preview()
     XCTAssertFalse(samsPreview.isOwnerWithOtherAdmins)
   }
+
+  /// API PR #117 on an end-to-end server with the flag on: no automatic fallback (an account from before is refused
+  /// until the person chooses "sign in with the password itself"), the return note on the letter, held counts on
+  /// conversation rows, and a coded condition on a deletion refusal.
+  ///
+  ///     ABC_LIVE_THROWAWAY=http://localhost:3199 swift test --filter testThrowawayServerClientFeedback
+  func testThrowawayServerClientFeedback() async throws {
+    let member = try container("ABC_LIVE_THROWAWAY"), writer = try container("ABC_LIVE_THROWAWAY")
+    let base = try XCTUnwrap(env("ABC_LIVE_THROWAWAY"))
+    for port in [":3000", ":3100", ":3069"] { XCTAssertFalse(base.contains(port), "that is a development server people use") }
+    await member.modes.refresh(); await writer.modes.refresh()
+    try XCTSkipIf(member.modes.mode != .e2e, "written for an end-to-end server")
+
+    // 1. An account from before: refused by the ordinary way, signed in by the person's choice.
+    await assertThrowsAppError(try await member.sessions.login(username: "member1", password: "password1")) {
+      print("live #117: the ordinary sign-in of an account from before is refused: \($0)")
+      XCTAssertTrue($0.isUnauthorized)
+    }
+    try await member.sessions.login(username: "member1", password: "password1", olderAccount: true)
+    XCTAssertEqual(member.sessions.state.session?.olderAccount, true)
+    member.sessions.recoveryCodeSaved()
+    _ = await member.group.setUpKeys()
+    let groupId = try XCTUnwrap(member.sessions.state.user?.chapterId)
+    // The proof for a change goes the remembered way; the change moves the account to split.
+    try await member.sessions.changePassword(current: "password1", new: "Bicycle tomato harvest 9")
+    XCTAssertEqual(member.sessions.state.session?.olderAccount, false)
+    try await member.sessions.logout()
+    try await member.sessions.login(username: "member1", password: "Bicycle tomato harvest 9")
+    let keyAgain = await member.group.refreshKeyState()
+    XCTAssertTrue(keyAgain.isReady, "the same key, now under the wrap key")
+
+    // 2. A writer (from before too) with a returned letter and a held one.
+    await assertThrowsAppError(try await writer.sessions.login(username: "user1", password: "password1")) { XCTAssertTrue($0.isUnauthorized) }
+    try await writer.sessions.login(username: "user1", password: "password1", olderAccount: true)
+    writer.sessions.recoveryCodeSaved()
+    let first = try await writer.letters.send(NewLetter(prisonerId: 1, body: "Will come back.", relayNote: nil, relayChapter: groupId, groupRelaysFacility: true))
+    _ = try await member.group.setStatus(messageId: first.id, status: .printed)
+    _ = try await member.group.setStatus(messageId: first.id, status: .mailed)
+    _ = try await member.group.markReturned(messageId: first.id, reason: .refused, note: "Stamped REFUSED")
+    let thread = try await writer.letters.thread(chatId: try XCTUnwrap(first.threadId))
+    let back = try XCTUnwrap(thread.letters.first { $0.id == first.id })
+    XCTAssertEqual(back.returnNote, "Stamped REFUSED"); XCTAssertTrue(back.history.isEmpty, "the note came with the conversation; no history was read")
+
+    let admin = try await Admin.signIn(base)
+    let held = try await writer.letters.send(NewLetter(prisonerId: 4, body: "Will be held.", relayNote: nil, relayChapter: nil))
+    try await admin.put("prisoner/prisoner", ["id": 4, "status": "free"])
+    let rows = try await writer.letters.threads(page: 1, pageSize: 50)
+    let row = try XCTUnwrap(rows.items.first { $0.id == held.threadId })
+    print("live #117: the conversation row says \(row.heldCount) held, reasons \(row.heldReasons)")
+    XCTAssertEqual(row.heldCount, 1); XCTAssertEqual(row.heldReasons, [.prisonerFree])
+
+    // 3. A deletion refusal carries its condition: the writer is fine to go; the group owner is not.
+    let preview = await member.accountDeletion.preview()
+    XCTAssertFalse(preview.isOwnerWithOtherAdmins, "no other group admin on this throwaway")
+    XCTAssertTrue(preview.isLastKeyHolder)
+    await assertThrowsAppError(try await member.sessions.deleteAccount(password: "Bicycle tomato harvest 9")) {
+      print("live #117: the deletion refusal's condition: \($0.conflictCondition ?? "none")")
+      XCTAssertEqual($0.conflictCondition, "last_key_holder")
+    }
+  }
 }

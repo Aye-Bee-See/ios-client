@@ -62,9 +62,12 @@ struct ChatDTO: Decodable {
   let messages: [MessageDTO]?
   let userDetails: UserDTO?
   let prisonerDetails: PrisonerDTO?
+  /// API PR #117: how many of the thread's letters are held, and the distinct reasons.
+  let heldCount: Int?
+  let heldReasons: [String]?
 
   private enum CodingKeys: String, CodingKey {
-    case id, prisoner, updatedAt, lastMessageAt, messages
+    case id, prisoner, updatedAt, lastMessageAt, messages, heldCount, heldReasons
     case lastMessage = "last_message", userDetails = "user_details", prisonerDetails = "prisoner_details"
   }
 }
@@ -103,6 +106,8 @@ struct MessageDTO: Decodable {
   let relayNoteNonce: String?
   let envelopes: [EnvelopeDTO]?
   let returnReason: String?
+  /// API PR #117: the return's note on the letter itself, so a conversation need not read every returned letter's history.
+  let returnNote: String?
   let heldReason: String?
   let resendOf: Int?
   let resentAs: [ResentAsDTO]?
@@ -111,7 +116,7 @@ struct MessageDTO: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
-    case returnReason, heldReason, resendOf
+    case returnReason, returnNote, heldReason, resendOf
     case resentAs = "resent_as", prisonerDetails = "prisoner_details"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"

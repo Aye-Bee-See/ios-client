@@ -454,15 +454,20 @@ final class FakeAPI: @unchecked Sendable {
     case ("GET", "/chat/chats"):
       guard let a = caller(r) else { return .error(401, info: "Sign in.") }
       let mine = messages.filter { $0["user"] as? Int == a.id }
-      let chats = Set(mine.compactMap { $0["prisoner"] as? Int }).sorted().map { ["id": $0, "prisoner": $0] as [String: Any] }
+      let chats = Set(mine.compactMap { $0["prisoner"] as? Int }).sorted().map { pid -> [String: Any] in
+        let held = mine.filter { $0["prisoner"] as? Int == pid }.compactMap { $0["heldReason"] as? String }
+        return ["id": pid, "prisoner": pid, "heldCount": held.count, "heldReasons": Array(Set(held)).sorted()]
+      }
       let size = Int(r.query["page_size"] ?? "20") ?? 20
       return .data(Array(chats.prefix(size)), extra: ["total": chats.count, "page": 1, "page_size": size])
 
     case ("GET", "/chat/chat"):
       // Like the real one: a conversation's letters come with their columns, and without `status_history` or `resent_as`.
       guard let a = caller(r), let pid = r.query["id"].flatMap(Int.init) else { return .error(401, info: "Sign in.") }
-      let letters = messages.filter { $0["prisoner"] as? Int == pid && $0["user"] as? Int == a.id }.map { m in visible(m, to: a).filter { $0.key != "status_history" && $0.key != "resent_as" } }
-      return .data(["id": pid, "prisoner": pid, "messages": letters])
+      let mine = messages.filter { $0["prisoner"] as? Int == pid && $0["user"] as? Int == a.id }
+      let letters = mine.map { m in visible(m, to: a).filter { $0.key != "status_history" && $0.key != "resent_as" } }
+      let held = mine.compactMap { $0["heldReason"] as? String }
+      return .data(["id": pid, "prisoner": pid, "messages": letters, "heldCount": held.count, "heldReasons": Array(Set(held)).sorted()])
 
     case ("GET", "/messaging/message"):
       guard let a = caller(r), let m = messages.first(where: { $0["id"] as? Int == r.query["id"].flatMap(Int.init) }) else { return .error(404, info: "No such letter.") }
@@ -556,6 +561,7 @@ final class FakeAPI: @unchecked Sendable {
       }
       if to == "mailed", let g = messages[i]["relayChapter"] as? Int { lettersCounted[g, default: 0] += 1 }
       messages[i]["status"] = to; messages[i]["heldReason"] = nil; messages[i]["returnReason"] = to == "returned" ? reason : nil
+      messages[i]["returnNote"] = to == "returned" ? (note?.trimmingCharacters(in: .whitespaces).isEmpty == false ? note : nil) : nil
       var history = messages[i]["status_history"] as? [[String: Any]] ?? []
       history.append(["fromStatus": from, "toStatus": to, "changedBy": a.id, "createdAt": "2026-09-20T10:00:00.000Z", "reason": (to == "returned" ? reason : nil) ?? NSNull(), "note": note ?? NSNull()])
       messages[i]["status_history"] = history

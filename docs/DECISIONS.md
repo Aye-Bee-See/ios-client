@@ -2,6 +2,14 @@
 
 Short records of choices that are not obvious from the code. Newest first. Decisions that the Android client made for both platforms (the wire formats, NFKC, keys in memory only, no key rotation in the app) are in `../../Android/docs/DECISIONS.md` and are not repeated here; this file is for what iOS had to decide for itself.
 
+## 2026-09-23: the fallback to the password is gone; the person's choice replaces it
+
+**Context.** API PR #117 answered the mobile sessions' asks. On item 23 the API decided (c): every account is moved to split before `REQUIRE_SPLIT_AUTH` goes on, and a client never sends the password on its own after a refused auth key. This app had Android's one-time fallback.
+
+**Decision.** As Android's revision of 23 September: the automatic fallback is removed from sign-in, unlocking and every proof. What remains is an explicit choice on the sign-in screen, worded as an escape hatch ("Only if a superadmin told you to."), which sends the password as it is, once, by the person's decision, never for a name this phone knows as split. The session records the way it was signed in (`Session.olderAccount`, stored with it; a session stored before the field reads as false), so a later proof of the password goes the same way, and the field is cleared when a password change moves the account to split. The mistyped-password cost of the fallback no longer applies.
+
+**Also from #117.** `returnNote` is read from the letter and the per-letter history read is kept only for an older API that sends none; conversation rows show `heldCount` with wording by which side the hold waits on; a deletion refusal is worded by `condition` (done on the group-roles branch). "Changed by someone else meanwhile" is still known by its words: Android's ask 28 to the API stands.
+
 ## 2026-09-23: "Make owner" is offered only to a holder of the key, and refusals are read by their code
 
 **Context.** API PR #115 gives each group one group-owner admin, the only account that hands the key out, takes it back, rotates it, or passes the role on. `PUT /auth/chapter-owner` lets the role go to any group admin of the chapter, holder of the key or not, and answers `holdsGroupKey` so the client knows which. PR #117 puts a `condition` on `AccountDeleteError`.
