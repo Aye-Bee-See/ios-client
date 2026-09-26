@@ -1,6 +1,6 @@
-# ABC Mailbox for iOS
+# letters.support for iOS
 
-The iPhone and iPad client for Aye Bee See, a correspondence network for political prisoners. Writers find a prisoner, read the facility's mail rules, and write; a support group prints and mails the letter and records the reply.
+The iPhone and iPad client for letters.support (until 22 September 2026 called Aye Bee See, or ABC Mailbox), a correspondence network for political prisoners. Writers find a prisoner, read the facility's mail rules, and write; a support group prints and mails the letter and records the reply.
 
 It does what the Android client (`../Android`) did as of its phase 10 (19 September 2026), push aside, screen for screen, and speaks the same API and the same end-to-end encryption. What Android has since gained and this app has not is listed under "Behind Android" below. The Android documents remain the map: `../Android/docs/PLAN.md` for what is built and why, `../android-client-brief.md` for the API. This directory adds only what is particular to iOS:
 

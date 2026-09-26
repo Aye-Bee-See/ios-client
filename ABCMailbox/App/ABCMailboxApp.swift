@@ -65,7 +65,8 @@ enum BuildInfo {
 
   /// `APIBaseURL` in Info.plist, which the build fills from the `API_BASE_URL` build setting:
   /// `http://localhost:3000/` for Debug (the simulator shares the Mac's network, so the
-  /// Mac's localhost is the simulator's too) and the deployed API for Release.
+  /// Mac's localhost is the simulator's too) and, for Release, the public test API at
+  /// `https://abctest.letters.support/`, the only deployed one so far.
   static let apiBaseURL: URL = {
     let configured = (Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String).flatMap(URL.init(string:))
     return configured ?? URL(string: "http://localhost:3000/")!

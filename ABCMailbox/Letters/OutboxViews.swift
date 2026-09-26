@@ -95,7 +95,7 @@ struct OutboxNotifier {
   func notify(_ outcome: FlushOutcome) async {
     guard let text = Self.text(outcome) else { return }
     let content = UNMutableNotificationContent()
-    content.title = "ABC Mailbox"
+    content.title = "letters.support"
     content.body = text
     content.sound = .default
     try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: outcome.refused > 0 ? "outbox-refused" : "outbox-sent", content: content, trigger: nil))
