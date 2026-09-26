@@ -35,8 +35,12 @@ final class JoinModel {
 
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !code.trimmingCharacters(in: .whitespaces).isEmpty }
-  var canJoin: Bool {
-    !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && PasswordRules.isLongEnough(password) && passwordsMatch && understood && !penName.blocks
+  var canJoin: Bool { !busy && info != nil && missing == nil }
+
+  /// The first thing the form still needs, as a sentence for under the disabled button.
+  var missing: String? {
+    if penName.blocks { return "Choose another pen name, or leave it empty for now." }
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
   }
 
   func edited() { error = nil }
@@ -145,7 +149,7 @@ struct JoinView: View {
         ? "Your password protects your encryption key. No one, not this site and not your group, can read your letters without it. After this step you will get a recovery code: it is the only way back in if you forget the password."
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
-    LabeledField(label: "Username", hint: "3 to 16 characters") {
+    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("join-username")
     }
@@ -165,6 +169,7 @@ struct JoinView: View {
     problem
     Button(model.busy ? "Joining… this takes a few seconds" : "Join") { Task { await model.join() } }
       .buttonStyle(.primary).disabled(!model.canJoin).accessibilityIdentifier("join-submit")
+    if !model.busy, model.error == nil, let missing = model.missing { Muted(missing) }
     Button("Use a different code") { model.startOver() }.buttonStyle(.link)
       .onChange(of: model.username + model.password + model.confirm + model.email + model.name) { model.edited() }
   }

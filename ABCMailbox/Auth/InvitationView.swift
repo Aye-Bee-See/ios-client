@@ -34,15 +34,15 @@ final class InvitationModel {
 
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !token.trimmingCharacters(in: .whitespaces).isEmpty }
-  /// A new group needs a name and a place, where the invitation lets the form say them.
-  var groupComplete: Bool {
-    guard let info, info.kind == .group else { return true }
-    func filled(_ field: String, _ value: String) -> Bool { !info.groupFields.contains(field) || !value.trimmingCharacters(in: .whitespaces).isEmpty }
-    return filled("name", group.name) && filled("location", group.city)
-  }
-  var canAccept: Bool {
-    !busy && info != nil && groupComplete && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count)
-      && PasswordRules.isLongEnough(password) && passwordsMatch && understood
+  var canAccept: Bool { !busy && info != nil && missing == nil }
+
+  /// The first thing the form still needs, as a sentence for under the disabled button.
+  var missing: String? {
+    if let info, info.kind == .group {
+      if info.groupFields.contains("name"), group.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give your group a name." }
+      if info.groupFields.contains("location"), group.city.trimmingCharacters(in: .whitespaces).isEmpty { return "Say which city your group is in." }
+    }
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
   }
 
   func edited() { error = nil }
@@ -166,7 +166,7 @@ struct InvitationView: View {
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
     SectionTitle("Your account")
-    LabeledField(label: "Username", hint: "3 to 16 characters") {
+    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("invitation-username")
     }
@@ -184,6 +184,7 @@ struct InvitationView: View {
     problem
     Button(model.busy ? "Accepting… this takes a few seconds" : "Accept invitation") { Task { await model.accept() } }
       .buttonStyle(.primary).disabled(!model.canAccept).accessibilityIdentifier("invitation-submit")
+    if !model.busy, model.error == nil, let missing = model.missing { Muted(missing) }
     Button("Use a different invitation") { model.startOver() }.buttonStyle(.link)
       .onChange(of: [model.username, model.password, model.confirm, model.email, model.name, model.group.name, model.group.city, model.group.country, model.group.about, model.group.website, model.group.email]) { model.edited() }
   }
