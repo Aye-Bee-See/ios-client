@@ -7,7 +7,9 @@ enum NewAccountForm {
 
   static func usernameTooLong(_ username: String) -> Bool { username.trimmingCharacters(in: .whitespaces).count > usernameLength.upperBound }
 
-  static func missing(username: String, password: String, confirm: String, understood: Bool) -> String? {
+  /// `email` is checked only when given: accepting an invitation needs a real address, while a join lets the
+  /// server store a placeholder.
+  static func missing(username: String, password: String, confirm: String, email: String? = nil, understood: Bool) -> String? {
     let name = username.trimmingCharacters(in: .whitespaces)
     if name.isEmpty { return "Choose a username." }
     if name.count < usernameLength.lowerBound { return "A username has at least \(usernameLength.lowerBound) characters." }
@@ -15,6 +17,11 @@ enum NewAccountForm {
     if !PasswordRules.isLongEnough(password) { return "Your password needs at least \(PasswordRules.minLength) characters." }
     if confirm.isEmpty { return "Type your password again to confirm it." }
     if password != confirm { return "The two passwords do not match." }
+    if let email {
+      let address = email.trimmingCharacters(in: .whitespaces)
+      if address.isEmpty { return "Enter your email address." }
+      if !address.contains("@") || !address.contains(".") { return "That email address does not look complete." }
+    }
     if !understood { return "Tick the box to say you understand that a lost password cannot be reset by email." }
     return nil
   }

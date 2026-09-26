@@ -41,7 +41,7 @@ final class InvitationsTests: XCTestCase {
     XCTAssertEqual(info.kind, .member); XCTAssertEqual(info.groupName, "Test Chapter"); XCTAssertFalse(info.waitsForReview)
     XCTAssertNil(app.requests(to: "/invitation/invitation").first?.headers["Authorization"])
 
-    let accepted = try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: nil, name: "Ada", penName: " Ada   Lovelace ", group: NewGroupProfile())
+    let accepted = try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: "r@example.com", name: "Ada", penName: " Ada   Lovelace ", group: NewGroupProfile())
     XCTAssertEqual(accepted, AcceptedInvitation(groupName: "Test Chapter", waitsForReview: false))
 
     let sent = try XCTUnwrap(app.requests(to: "/invitation/accept", method: "POST").first)
@@ -77,11 +77,11 @@ final class InvitationsTests: XCTestCase {
   func testARefusedAcceptanceLeavesTheInvitationUsableAndAUsedOneSaysSo() async throws {
     fake.accounts = [FakeAPI.Account(id: 3, username: "taken", password: "x")]
     let info = try await sessions.invitationInfo(token: memberToken)
-    await assertThrowsAppError(try await sessions.acceptInvitation(token: memberToken, info: info, username: "taken", password: password, email: nil, name: nil, penName: nil, group: nil)) {
+    await assertThrowsAppError(try await sessions.acceptInvitation(token: memberToken, info: info, username: "taken", password: password, email: "t@example.com", name: nil, penName: nil, group: nil)) {
       XCTAssertEqual($0, .validation(["That username is taken."]))
     }
     XCTAssertNil(sessions.state.user)
-    try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: nil, name: nil, penName: nil, group: nil)
+    try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: "r@example.com", name: nil, penName: nil, group: nil)
     try await sessions.logout(everywhere: false)
 
     await assertThrowsAppError(try await sessions.invitationInfo(token: memberToken)) {
@@ -94,7 +94,7 @@ final class InvitationsTests: XCTestCase {
     let fake = fake!
     app = TestApp { r in r.path == "/health" ? Stubbed(status: -1) : fake.handle(r) }
     let info = try await sessions.invitationInfo(token: memberToken)
-    await assertThrowsAppError(try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: nil, name: nil, penName: nil, group: nil)) {
+    await assertThrowsAppError(try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: "r@example.com", name: nil, penName: nil, group: nil)) {
       XCTAssertEqual($0, .network)
     }
     XCTAssertEqual(app.requests(to: "/invitation/accept").count, 0)

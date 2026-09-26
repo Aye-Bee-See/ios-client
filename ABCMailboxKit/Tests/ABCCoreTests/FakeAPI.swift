@@ -315,6 +315,8 @@ final class FakeAPI: @unchecked Sendable {
       guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
       if accounts.contains(where: { $0.username == username }) { return .error(400, extra: ["errors": ["That username is taken."]]) }
       guard let password = body["password"] as? String else { return .error(400, extra: ["errors": ["password is required."]]) }
+      // Unlike a join, no placeholder address is stored: the account needs a real one.
+      guard body["email"] is String else { return .error(400, extra: ["errors": ["Email cannot be null."]]) }
       var made = Account(id: id(), username: username, password: password, role: "chapter", chapterId: groupId, name: body["name"] as? String)
       made.penName = body["penName"] as? String
       accounts.append(made)

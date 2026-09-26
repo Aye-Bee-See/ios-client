@@ -42,7 +42,7 @@ final class InvitationModel {
       if info.groupFields.contains("name"), group.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give your group a name." }
       if info.groupFields.contains("location"), group.city.trimmingCharacters(in: .whitespaces).isEmpty { return "Say which city your group is in." }
     }
-    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, email: email, understood: understood)
   }
 
   func edited() { error = nil }
@@ -177,7 +177,7 @@ struct InvitationView: View {
     LabeledField(label: "Your name (optional)", hint: "What the other admins of your group see.") {
       TextField("", text: $model.name).textContentType(.name)
     }
-    LabeledField(label: "Email (optional)") {
+    LabeledField(label: "Email", hint: "Required for a group admin. Other admins and the network's admins can reach you there.") {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
     CheckboxRow(text: "I understand that a lost password cannot be reset by email.", isOn: $model.understood)
