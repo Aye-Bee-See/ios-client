@@ -113,6 +113,7 @@ struct RouteView: View {
     case .groupNumbers: GroupNumbersView(app: app)
     case .inviteCodes: InviteCodesView(app: app)
     case .changePassword: ChangePasswordView(app: app)
+    case .penName: PenNameView(app: app)
     case .deleteAccount: DeleteAccountView(app: app)
     }
   }

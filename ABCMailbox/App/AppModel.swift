@@ -30,6 +30,8 @@ enum Route: Hashable {
   /// Invite codes (API PR #116): print slips, see the quota, cancel unused codes.
   case inviteCodes
   case changePassword
+  /// A writer's pen name, and the limits on changing it (API #127).
+  case penName
   case deleteAccount
 }
 
@@ -57,6 +59,8 @@ enum AuthRoute: Hashable {
   case claim(token: String?)
   /// `code` is set when the screen was opened by a join link (API PR #116).
   case join(code: String?)
+  /// An invitation to be a group admin: to join a group, or to found one. Reached from the invite code box.
+  case invitation(token: String?)
   case recover
 }
 

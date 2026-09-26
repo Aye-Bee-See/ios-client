@@ -110,6 +110,7 @@ struct JoinRequest: Encodable {
   var password: String
   let email: String?
   let name: String?
+  var penName: String?
   var authScheme: String?
   var publicKey: String?
   var wrappedPrivateKey: String?
@@ -118,6 +119,100 @@ struct JoinRequest: Encodable {
   var recoveryWrappedPrivateKey: String?
   var recoverySalt: String?
   var recoveryKdfParams: KdfParams?
+}
+
+/// A request that makes an account with keys made on this phone: joining with an invite code, or accepting an
+/// invitation. The password and key fields are filled the same way for both (`SessionRepository.fillNewAccount`).
+protocol NewAccountRequest {
+  var password: String { get set }
+  var authScheme: String? { get set }
+  var publicKey: String? { get set }
+  var wrappedPrivateKey: String? { get set }
+  var kdfSalt: String? { get set }
+  var kdfParams: KdfParams? { get set }
+  var recoveryWrappedPrivateKey: String? { get set }
+  var recoverySalt: String? { get set }
+  var recoveryKdfParams: KdfParams? { get set }
+}
+
+extension JoinRequest: NewAccountRequest {}
+
+/// `GET /invitation/invitation?token=`.
+struct InvitationInfoDTO: Decodable {
+  let kind: String?
+  let inviteeName: String?
+  let chapter: NamedRef?
+  let expiresAt: String?
+  let activation: String?
+  let groupFields: [String]?
+}
+
+/// `POST /invitation/accept`: the account fields of a join, the token, and for a `group` invitation the new group.
+struct AcceptInvitationRequest: Encodable, NewAccountRequest {
+  let token: String
+  let username: String
+  var password: String
+  let email: String?
+  let name: String?
+  var penName: String?
+  var group: GroupProfileDTO?
+  var authScheme: String?
+  var publicKey: String?
+  var wrappedPrivateKey: String?
+  var kdfSalt: String?
+  var kdfParams: KdfParams?
+  var recoveryWrappedPrivateKey: String?
+  var recoverySalt: String?
+  var recoveryKdfParams: KdfParams?
+}
+
+/// The new group's profile, limited to the invitation's `groupFields`: a field it does not list is left out,
+/// because the server refuses the whole acceptance over one it does not allow.
+struct GroupProfileDTO: Encodable, Equatable {
+  struct Location: Encodable, Equatable { let city: String }
+  var name: String?
+  var location: Location?
+  var country: String?
+  var about: String?
+  var website: String?
+  var email: String?
+
+  init(_ p: NewGroupProfile, allowed: Set<String>) {
+    func field(_ key: String, _ value: String) -> String? { allowed.contains(key) ? value.trimmed.nonBlank : nil }
+    name = field("name", p.name)
+    location = field("location", p.city).map(Location.init(city:))
+    country = field("country", p.country)
+    about = field("about", p.about)
+    website = field("website", p.website)
+    email = field("email", p.email)
+  }
+}
+
+struct AcceptedInvitationDTO: Decodable {
+  struct Group: Decodable { let id: Int; let name: String?; let accountStatus: String? }
+  let user: UserDTO?
+  let chapter: Group?
+  let activation: String?
+}
+
+/// `GET /auth/pen-name-available?name=`.
+struct PenNameCheckDTO: Decodable {
+  let available: Bool?
+  let name: String?
+  let reason: String?
+  let twoParts: Bool?
+}
+
+/// `GET /auth/pen-name`: the names, and the limits from API #127 (absent from an older API).
+struct PenNamesDTO: Decodable {
+  struct Row: Decodable { let name: String; let current: Bool?; let since: String? }
+  let penName: String?
+  let names: [Row]?
+  let changeAllowedAt: String?
+  let newNamesLeft: Int?
+  let newNamesWindowEnds: String?
+  let cooldownDays: Int?
+  let newPerYear: Int?
 }
 
 struct JoinedDTO: Decodable {
@@ -143,6 +238,8 @@ struct ClaimRequest: Encodable {
 
 struct UpdateUserRequest: Encodable {
   let id: Int
+  /// A pen name change (API #127 limits it: once every 90 days, two new names a year).
+  var penName: String?
   var password: String?
   /// `"split"`: `password` is the auth key, derived with `kdfSalt`/`kdfParams` (API PR #114). Absent means plain.
   var authScheme: String?

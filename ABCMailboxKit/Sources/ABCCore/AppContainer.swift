@@ -19,6 +19,7 @@ public final class AppContainer {
   public let outbox: OutboxRepository
   public let activity: ActivityRepository
   public let accountDeletion: AccountDeletion
+  public let penNames: PenNameRepository
   public let files: LocalFiles
   public let devServer: DevServerRepository
 
@@ -69,6 +70,7 @@ public final class AppContainer {
     // A copy of the group key handed or withdrawn, or the owner changed: the loaded key follows, from any fetch of the feed.
     activity.onGroupKeyChange = { [groupRepo] in await groupRepo.refreshKeyState() }
     accountDeletion = AccountDeletion(sessions: sessions, modes: modes, letters: letters, group: group, drafts: drafts, outbox: outbox, activity: activity)
+    penNames = PenNameRepository(api: api, sessions: sessions)
     devServer = DevServerRepository(defaults: defaults, holder: holder, sessions: sessions, modes: modes)
   }
 }
