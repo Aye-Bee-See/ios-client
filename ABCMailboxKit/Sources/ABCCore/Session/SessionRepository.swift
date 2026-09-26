@@ -286,7 +286,7 @@ public final class SessionRepository {
     var request = JoinRequest(code: code, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank)
     var recoveryCode: String?
     var madeHere: Sodium.KeyPair? // local to this join: a second join in flight must not see it
-    if await modes.current() == .e2e {
+    if try await modes.required() == .e2e {
       let fresh = split ? try await engine.createAccountKeysSplit(password: password) : try await engine.createAccountKeys(password: password)
       let f = fresh.fields
       request.publicKey = f.publicKey

@@ -185,7 +185,7 @@ public final class GroupRepository {
 
   public func addWriter(name: String, email: String?, note: String?) async throws -> ManagedWriter {
     var request = AddWriterRequest(name: name.trimmed, email: email?.trimmed.nonBlank, managerNote: note?.trimmed.nonBlank)
-    guard await codec.isEndToEnd() else {
+    guard try await codec.sendsEndToEnd() else {
       let envelope: APIEnvelope<WriterDTO> = try await api.send("POST", "auth/writer", body: request)
       let writer = try envelope.required("writer")
       // Server mode, before the switch: the writer gets a keypair all the same, if this member can make one.
@@ -214,7 +214,7 @@ public final class GroupRepository {
   }
 
   public func issueToken(writerId: Int) async throws -> IssuedToken {
-    guard await codec.isEndToEnd() else {
+    guard try await codec.sendsEndToEnd() else {
       let envelope: APIEnvelope<IssuedTokenDTO> = try await api.send("POST", "auth/writer/token", body: IssueTokenRequest(writer: writerId))
       guard let token = envelope.data?.token else { throw AppError.unexpected("The server did not return a token.") }
       return IssuedToken(token: token, expiresAt: envelope.data?.expiresAt.instant)
