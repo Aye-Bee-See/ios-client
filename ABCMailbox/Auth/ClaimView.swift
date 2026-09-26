@@ -12,6 +12,7 @@ final class ClaimModel {
   var password = ""
   var confirm = ""
   var email = ""
+  let penName: PenNameChecker
   var understood = false
   var showPassword = false
   private(set) var info: ClaimInfo?
@@ -27,12 +28,17 @@ final class ClaimModel {
     self.app = app
     self.arrivedWith = token
     self.token = token.map(ClaimToken.pretty) ?? ""
+    self.penName = PenNameChecker(penNames: app.container.penNames)
   }
 
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !token.trimmingCharacters(in: .whitespaces).isEmpty }
-  var canClaim: Bool {
-    !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && PasswordRules.isLongEnough(password) && passwordsMatch && understood
+  var canClaim: Bool { !busy && info != nil && missing == nil }
+
+  /// The first thing the form still needs, as a sentence for under the disabled button.
+  var missing: String? {
+    if penName.blocks { return "Choose another pen name, or leave it empty for now." }
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
   }
 
   func edited() { error = nil }
@@ -45,6 +51,7 @@ final class ClaimModel {
   func startOver() {
     token = ""
     username = ""; password = ""; confirm = ""; email = ""; understood = false
+    penName.clear()
   }
 
   func check() async {
@@ -66,7 +73,7 @@ final class ClaimModel {
     busy = true; error = nil
     defer { busy = false }
     do {
-      try await app.sessions.claim(token: ClaimToken.normalise(token), username: username, password: password, email: email)
+      try await app.sessions.claim(token: ClaimToken.normalise(token), username: username, password: password, email: email, penName: penName.value)
       password = ""; confirm = ""
       app.authFinished(toast: "Account claimed. You are signed in.", goToInbox: true)
     } catch {
@@ -136,7 +143,7 @@ struct ClaimView: View {
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
 
-    LabeledField(label: "Username", hint: "3 to 16 characters") {
+    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("claim-username")
     }
@@ -146,6 +153,8 @@ struct ClaimView: View {
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
       .accessibilityIdentifier("claim-confirm")
+    PenNameField(checker: model.penName, label: "Pen name (optional)")
+    Muted("The name your letters are signed with, and the name a prisoner writes back to. Choosing it now is free; later, a change waits 90 days.")
     LabeledField(label: "Email (optional)") {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
@@ -155,6 +164,7 @@ struct ClaimView: View {
     problem
     Button(model.busy ? "Claiming… this takes a few seconds" : "Claim account") { Task { await model.claim() } }
       .buttonStyle(.primary).disabled(!model.canClaim).accessibilityIdentifier("claim-submit")
+    if !model.busy, model.error == nil, let missing = model.missing { Muted(missing) }
     Button("Use a different token") { model.startOver() }.buttonStyle(.link)
       .onChange(of: model.username + model.password + model.confirm + model.email) { model.edited() }
   }
