@@ -6,7 +6,9 @@ import SwiftUI
 /// the name is free, so that the rate-limited check is not made for every character.
 @MainActor @Observable
 final class PenNameChecker {
-  var value = ""
+  /// Every change starts a check from here, not from the view: a burst of typing can reach the binding faster than
+  /// SwiftUI reports changes, and a missed last keystroke would leave "Checking…" up for good.
+  var value = "" { didSet { if value != oldValue { edited() } } }
   private(set) var problem: String?
   private(set) var checking = false
   private(set) var check: PenNameCheck?
@@ -33,7 +35,7 @@ final class PenNameChecker {
     return checkFailed ? "Could not check the name just now; it will be checked when you continue." : nil
   }
 
-  func edited() {
+  private func edited() {
     task?.cancel()
     check = nil; checkFailed = false; checking = false
     problem = isBlank ? nil : PenName.problem(value)
@@ -45,17 +47,16 @@ final class PenNameChecker {
       checking = true
       let answer: PenNameCheck?
       do { answer = try await penNames.check(typed) } catch { answer = nil }
-      // Typing went on meanwhile: this answer is about an older name, and the newer one has its own check coming.
-      guard value == typed, !Task.isCancelled else { return }
+      // A newer edit took over: it has reset the state and started its own check.
+      guard !Task.isCancelled else { return }
       checking = false
+      // The text moved on without a newer check (keystrokes coalesced): check what is there now.
+      guard value == typed else { edited(); return }
       if let answer { check = answer } else { checkFailed = true }
     }
   }
 
-  func clear() {
-    value = ""
-    edited()
-  }
+  func clear() { value = "" }
 }
 
 struct PenNameField: View {
@@ -68,6 +69,5 @@ struct PenNameField: View {
         .textInputAutocapitalization(.words).autocorrectionDisabled()
         .accessibilityIdentifier("pen-name")
     }
-    .onChange(of: checker.value) { checker.edited() }
   }
 }

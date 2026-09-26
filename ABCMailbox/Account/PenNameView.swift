@@ -50,7 +50,8 @@ final class PenNameModel {
       let saved = try await app.container.penNames.set(checker.value)
       checker.clear()
       await load()
-      app.show("Your pen name is now \(saved).")
+      // Going back to an old name keeps its first spelling, whatever was typed: say the name as the server has it.
+      app.show("Your pen name is now \(names?.current ?? saved).")
     } catch {
       let e = AppError.from(error)
       // The limits may have moved since the screen opened (another device): read them again, then say why.
