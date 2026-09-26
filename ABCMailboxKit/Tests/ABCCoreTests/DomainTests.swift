@@ -135,7 +135,7 @@ final class DevServerTests: XCTestCase {
     XCTAssertEqual(DevServerRepository.normalise("192.168.1.20"), "http://192.168.1.20:3000/")
     XCTAssertEqual(DevServerRepository.normalise(" 192.168.1.20:3000 "), "http://192.168.1.20:3000/")
     XCTAssertEqual(DevServerRepository.normalise("http://192.168.1.20:8080/some/path?x=1"), "http://192.168.1.20:8080/")
-    XCTAssertEqual(DevServerRepository.normalise("https://api.abcmailbox.net"), "https://api.abcmailbox.net/")
+    XCTAssertEqual(DevServerRepository.normalise("https://abctest.letters.support"), "https://abctest.letters.support/")
     XCTAssertEqual(DevServerRepository.normalise("mymac.local"), "http://mymac.local:3000/")
     XCTAssertNil(DevServerRepository.normalise(""))
     XCTAssertNil(DevServerRepository.normalise("not a url at all"))

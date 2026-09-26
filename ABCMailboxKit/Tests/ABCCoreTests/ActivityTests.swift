@@ -99,7 +99,7 @@ final class ActivityTests: XCTestCase {
     XCTAssertNil(ActivitySummary([]))
 
     let one = try XCTUnwrap(ActivitySummary([entry(1, .reply, chat: 12)]))
-    XCTAssertEqual(one.title, "ABC Mailbox"); XCTAssertEqual(one.body, "A reply to one of your letters has arrived."); XCTAssertEqual(one.chatId, 12)
+    XCTAssertEqual(one.title, "letters.support"); XCTAssertEqual(one.body, "A reply to one of your letters has arrived."); XCTAssertEqual(one.chatId, 12)
 
     let sameThread = try XCTUnwrap(ActivitySummary([entry(3, .mailed, chat: 12), entry(2, .printed, chat: 12), entry(1, .mailed, chat: 12)]))
     XCTAssertEqual(sameThread.title, "3 updates about your letters")

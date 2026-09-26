@@ -47,6 +47,27 @@ final class LettersFlowTests: XCTestCase {
     XCTAssertEqual(try LetterCipher.decryptText(ciphertext: request.json["relayNoteCiphertext"] as! String, nonce: request.json["relayNoteNonce"] as! String, contentKey: key), "two pages")
   }
 
+  func testWhileTheServerHasNotSaidItsModeNothingIsSentInTheClear() async throws {
+    // /health unreachable from launch: sign-in still works, but the mode stays unknown.
+    var healthDown = true
+    let fake = fake!
+    app = TestApp { r in r.path == "/health" && healthDown ? Stubbed(status: -1, body: Data()) : fake.handle(r) }
+    try await signIn()
+    await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: "two pages", relayChapter: 2))) {
+      XCTAssertEqual($0, .network)
+    }
+    let staged = try app.container.files.stage(data: Data([9, 8, 7]), name: "photo.jpg", mimeType: "image/jpeg")
+    await assertThrowsAppError(try await letters.upload(messageId: 1, staged: staged)) { XCTAssertEqual($0, .network) }
+    XCTAssertEqual(app.requests(to: "/messaging/message", method: "POST").count, 0)
+    XCTAssertEqual(app.requests(to: "/messaging/attachment", method: "POST").count, 0)
+
+    // Once the server answers, the same letter goes out sealed.
+    healthDown = false
+    _ = try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: "two pages", relayChapter: 2))
+    let request = try XCTUnwrap(app.requests(to: "/messaging/message", method: "POST").first)
+    XCTAssertNil(request.json["messageText"]); XCTAssertNotNil(request.json["ciphertext"])
+  }
+
   func testARelayGroupWithoutKeysCannotBeWrittenToAndSaysSo() async throws {
     try await signIn()
     await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: 9))) {

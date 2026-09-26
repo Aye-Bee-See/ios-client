@@ -83,6 +83,9 @@ final class LetterCodec {
 
   func isEndToEnd() async -> Bool { await modes.current() == .e2e }
 
+  /// For sending: whether to encrypt, and `.network` while the server has not said which mode it speaks.
+  func sendsEndToEnd() async throws -> Bool { try await modes.required() == .e2e }
+
   /// The request for a new letter; in end-to-end mode also the content key, for encrypting its attachments.
   func outgoing(_ letter: NewLetter) async throws -> (request: SendMessageRequest, contentKey: Data?) {
     let sender = letter.fromPrisoner ? "prisoner" : "user"
@@ -94,7 +97,7 @@ final class LetterCodec {
     // the empty body it allows.
     let paper = letter.paper && !letter.fromPrisoner
     if paper { request.paper = true }
-    guard await isEndToEnd() else {
+    guard try await sendsEndToEnd() else {
       // A paper letter needs no text; a transcription, if typed, travels like any body.
       request.messageText = paper && letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : letter.body
       request.relayNote = note

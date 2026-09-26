@@ -210,7 +210,7 @@ enum InviteSlips {
         let mono = UIFont.monospacedSystemFont(ofSize: 26, weight: .semibold), body = UIFont.systemFont(ofSize: 13), small = UIFont.systemFont(ofSize: 11)
         (groupName as NSString).draw(at: CGPoint(x: box.minX + pad, y: box.minY + pad), withAttributes: [.font: body])
         (InviteCode.pretty(code) as NSString).draw(at: CGPoint(x: box.minX + pad, y: box.minY + pad + 24), withAttributes: [.font: mono])
-        ("Your invite code for ABC Mailbox. In the app: Sign in, \"I have an invite code\". Or scan the square." as NSString).draw(in: CGRect(x: box.minX + pad, y: box.minY + pad + 64, width: box.width - 170, height: 40), withAttributes: [.font: small])
+        ("Your invite code for letters.support. In the app: Sign in, \"I have an invite code\". Or scan the square." as NSString).draw(in: CGRect(x: box.minX + pad, y: box.minY + pad + 64, width: box.width - 170, height: 40), withAttributes: [.font: small])
         (useBy as NSString).draw(at: CGPoint(x: box.minX + pad, y: box.maxY - pad - 14), withAttributes: [.font: small])
       }
     }

@@ -31,6 +31,14 @@ public final class EncryptionModeRepository {
   /// The known mode, asking the server first if it is not known yet.
   public func current() async -> EncryptionMode { mode != .unknown ? mode : await refresh() }
 
+  /// The mode, for a request whose shape depends on it. Unknown is never read as server mode: on an end-to-end
+  /// server that would send a letter or a file in the clear. The caller waits as it would offline.
+  func required() async throws -> EncryptionMode {
+    let mode = await current()
+    guard mode != .unknown else { throw AppError.network }
+    return mode
+  }
+
   /// `GET /health` as a sentence, for the developer server dialog.
   func describeHealth() async throws -> String {
     let health: HealthDTO = try await api.getPlain("health")

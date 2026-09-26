@@ -93,7 +93,7 @@ public final class LettersRepository {
     do { bytes = try Data(contentsOf: staged.url) } catch { throw AppError.unexpected("Could not read \(staged.name).") }
     var fields = [("message", String(messageId))]
     var payload = bytes
-    if await codec.isEndToEnd() {
+    if try await codec.sendsEndToEnd() {
       // End-to-end: the file is encrypted under the letter's content key before it leaves the phone.
       // The declared type still describes the plaintext; the server does not sniff ciphertext.
       guard let key = codec.contentKey(try await message(messageId)) else { throw AppError.lettersLocked }

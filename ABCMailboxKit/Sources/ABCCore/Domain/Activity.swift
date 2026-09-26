@@ -123,7 +123,7 @@ public struct ActivitySummary: Equatable, Sendable {
     for entry in fresh where !sentences.contains(entry.sentence) { sentences.append(entry.sentence) }
     let shown = sentences.prefix(3)
     let more = sentences.count - shown.count
-    title = fresh.count == 1 ? "ABC Mailbox" : "\(fresh.count) updates about your letters"
+    title = fresh.count == 1 ? "letters.support" : "\(fresh.count) updates about your letters"
     body = shown.joined(separator: " ") + (more > 0 ? " And \(more) more." : "")
     let chats = Set(fresh.map(\.chatId))
     chatId = chats.count == 1 ? first.chatId : nil
