@@ -178,13 +178,14 @@ final class SessionFlowTests: XCTestCase {
     let info = try await sessions.claimInfo(token: made.token)
     XCTAssertEqual(info.writerName, "Alex"); XCTAssertEqual(info.groupName, "Test Chapter"); XCTAssertTrue(info.endToEnd)
 
-    try await sessions.claim(token: made.token, username: "alex", password: "my own password", email: "  ")
+    try await sessions.claim(token: made.token, username: "alex", password: "my own password", email: "  ", penName: "  Alex   Rivers ")
     XCTAssertEqual(sessions.state.user?.id, 47)
     XCTAssertEqual(app.container.vault.keyPair(for: 47)?.privateKey, writer.privateKey, "earlier letters stay readable: the keypair did not change")
     XCTAssertTrue(SecretCodes.isWellFormed(try XCTUnwrap(sessions.pendingRecoveryCode)))
     XCTAssertEqual(app.requests(to: "/auth/claim", method: "GET").count, 1, "claim checks are rate limited: the check's answer is reused")
     let sent = try XCTUnwrap(app.requests(to: "/auth/claim", method: "POST").first).json
     XCTAssertNil(sent["email"], "a blank email is left out")
+    XCTAssertEqual(sent["penName"] as? String, "Alex Rivers", "one space between words, as the server stores it")
     XCTAssertNotNil(sent["recoveryWrappedPrivateKey"])
     XCTAssertNil(fake.accounts[1].orgWrappedPrivateKey)
   }
