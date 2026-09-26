@@ -4,6 +4,8 @@ import SwiftUI
 
 /// Joining with an invite code (API PR #116): the code on a slip, then a username and password, then the account is
 /// the person's from the first request. The keypair is made on this phone; the password never reaches the server.
+/// The box also takes an invitation (24 characters, not 12): that is sent on to its own screen, so a person with
+/// either kind of paper lands in the right flow.
 @MainActor @Observable
 final class JoinModel {
   var code: String
@@ -12,6 +14,7 @@ final class JoinModel {
   var confirm = ""
   var email = ""
   var name = ""
+  let penName: PenNameChecker
   var showPassword = false
   var understood = false
   private(set) var info: JoinInfo?
@@ -27,30 +30,41 @@ final class JoinModel {
     self.app = app
     self.arrivedWith = code
     self.code = code.map(InviteCode.pretty) ?? ""
+    self.penName = PenNameChecker(penNames: app.container.penNames)
   }
 
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !code.trimmingCharacters(in: .whitespaces).isEmpty }
-  var canJoin: Bool {
-    !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && PasswordRules.isLongEnough(password) && passwordsMatch && understood
+  var canJoin: Bool { !busy && info != nil && missing == nil }
+
+  /// The first thing the form still needs, as a sentence for under the disabled button.
+  var missing: String? {
+    if penName.blocks { return "Choose another pen name, or leave it empty for now." }
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
   }
 
   func edited() { error = nil }
 
   /// Arrived by the slip's QR: check the code straight away.
   func checkIfArrivedByLink() async {
-    if let arrivedWith, info == nil, !busy, InviteCode.isWellFormed(arrivedWith) { await check() }
+    if let arrivedWith, info == nil, !busy, InviteCode.isWellFormed(arrivedWith) || InvitationToken.isWellFormed(arrivedWith) { await check() }
   }
 
   func startOver() {
     code = ""
     username = ""; password = ""; confirm = ""; email = ""; name = ""; understood = false
+    penName.clear()
     info = nil; error = nil; codeDead = false
   }
 
   func check() async {
     let typed = code
-    if let problem = InviteCode.problem(typed) { error = problem; return }
+    if let problem = EntryCode.problem(typed) { error = problem; return }
+    if case .invitation(let token) = EntryCode.classify(typed) {
+      // An invitation, not an invite code: its own screen takes over, and Back comes to the sign-in screen.
+      app.authPath[app.authPath.count - 1] = .invitation(token: token)
+      return
+    }
     busy = true; error = nil; codeDead = false
     defer { busy = false }
     do {
@@ -67,7 +81,7 @@ final class JoinModel {
     busy = true; error = nil
     defer { busy = false }
     do {
-      try await app.sessions.join(code: InviteCode.normalise(code), username: username, password: password, email: email, name: name)
+      try await app.sessions.join(code: InviteCode.normalise(code), username: username, password: password, email: email, name: name, penName: penName.value)
       password = ""; confirm = ""
       app.authFinished(toast: "Welcome. You are signed in.", goToInbox: true)
     } catch {
@@ -110,8 +124,8 @@ struct JoinView: View {
   }
 
   @ViewBuilder private var codeEntry: some View {
-    Text("A support group gave you a slip with a code. Enter it to make your account; the group vouches for you and never sees what you write.").font(Theme.bodyLarge)
-    LabeledField(label: "Invite code", hint: "12 letters and digits, as printed. Dashes, spaces and lower case are fine.") {
+    Text("A support group gave you a slip with a code. Enter it to make your account; the group vouches for you and never sees what you write. If you were invited to run a group, enter that invitation here too.").font(Theme.bodyLarge)
+    LabeledField(label: "Invite code or invitation", hint: "12 letters and digits on a slip, or 24 in an invitation. Dashes, spaces and lower case are fine.") {
       TextField("XXXX-XXXX-XXXX", text: $model.code)
         .font(Theme.mono)
         .textInputAutocapitalization(.characters).autocorrectionDisabled().keyboardType(.asciiCapable)
@@ -135,7 +149,7 @@ struct JoinView: View {
         ? "Your password protects your encryption key. No one, not this site and not your group, can read your letters without it. After this step you will get a recovery code: it is the only way back in if you forget the password."
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
-    LabeledField(label: "Username", hint: "3 to 16 characters") {
+    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("join-username")
     }
@@ -146,6 +160,8 @@ struct JoinView: View {
     LabeledField(label: "Your name (optional)", hint: "What the group sees beside your letters, if you want a name there.") {
       TextField("", text: $model.name).textContentType(.name)
     }
+    PenNameField(checker: model.penName, label: "Pen name (optional)")
+    Muted("The name your letters are signed with, and the name a prisoner writes back to. You can choose it later, and every name you use stays yours.")
     LabeledField(label: "Email (optional)") {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
@@ -153,6 +169,7 @@ struct JoinView: View {
     problem
     Button(model.busy ? "Joining… this takes a few seconds" : "Join") { Task { await model.join() } }
       .buttonStyle(.primary).disabled(!model.canJoin).accessibilityIdentifier("join-submit")
+    if !model.busy, model.error == nil, let missing = model.missing { Muted(missing) }
     Button("Use a different code") { model.startOver() }.buttonStyle(.link)
       .onChange(of: model.username + model.password + model.confirm + model.email + model.name) { model.edited() }
   }

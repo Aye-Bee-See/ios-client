@@ -25,6 +25,7 @@ final class FakeAPI: @unchecked Sendable {
     /// API PR #114. For a split account `password` holds the auth key (44 characters of base64) and `keys` the
     /// `kdfSalt`/`kdfParams` the auth key was derived with, as on the server, where they are the same columns.
     var authScheme = "plain"
+    var penName: String?
   }
 
   private let lock = NSLock()
@@ -66,6 +67,12 @@ final class FakeAPI: @unchecked Sendable {
   var predatesGroupRoles = false
   /// Invite codes (API PR #116): each code, normalised, with its batch, chapter and state; batches with their labels.
   var inviteCodes: [String: (batch: String, chapter: Int, state: String)] = [:]
+  /// Invitations by normalised token. `state` is `pending`, `accepted`, `expired` or `revoked`.
+  var invitations: [String: (kind: String, chapter: Int?, state: String, activation: String)] = [:]
+  static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
+  /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
+  var penNameLimits: [String: Any] = ["changeAllowedAt": NSNull(), "newNamesLeft": 2, "newNamesWindowEnds": NSNull(), "cooldownDays": 90, "newPerYear": 2]
+  var penNameRefusal: (condition: String, error: String)?
   var inviteBatches: [String: (chapter: Int, label: String?, expiresAt: String, createdAt: String)] = [:]
   var inviteLimit = 20
   private var nextBatch = 0
@@ -286,6 +293,47 @@ final class FakeAPI: @unchecked Sendable {
       let user = userJSON(made)
       return .json(["data": ["user": user, "chapter": chapter], "success": true, "status": 201], status: 201)
 
+    case ("GET", "/invitation/invitation"), ("POST", "/invitation/accept"):
+      if r.headers["Authorization"] != nil { return .error(400, info: "public: the test's rule is that no token goes with it") }
+      let token = InviteCode.normalise(r.method == "GET" ? (r.query["token"] ?? "") : (body["token"] as? String ?? ""))
+      guard let inv = invitations[token] else { return .error(404, info: "This invitation is not valid.", extra: ["name": "InvitationError", "condition": "unknown"]) }
+      if inv.state != "pending" { return .error(410, info: "Invitation is \(inv.state).", extra: ["name": "InvitationError", "error": "Invitation is \(inv.state).", "condition": inv.state]) }
+      let inviting: Any = inv.chapter.map { ["id": $0, "name": "Test Chapter"] as [String: Any] } ?? NSNull()
+      if r.method == "GET" {
+        return .data(["kind": inv.kind, "inviteeName": "Riverside ABC", "chapter": inviting, "expiresAt": "2026-10-09T12:00:00.000Z", "activation": inv.activation, "groupFields": inv.kind == "group" ? Self.groupFields : []])
+      }
+      var groupId = inv.chapter ?? 0, groupName = "Test Chapter"
+      if inv.kind == "group" {
+        guard let group = body["group"] as? [String: Any] else { return .error(400, extra: ["errors": ["group is required: the new group's name, location, and profile."]]) }
+        let refused = group.keys.filter { !Self.groupFields.contains($0) }
+        if !refused.isEmpty { return .error(400, extra: ["errors": ["These group fields cannot be set when accepting an invitation: \(refused.joined(separator: ", "))."]]) }
+        guard let name = group["name"] as? String, group["location"] != nil else { return .error(400, extra: ["errors": ["A group needs a name and a location."]]) }
+        groupId = 50; groupName = name
+      } else if body["group"] != nil {
+        return .error(400, extra: ["errors": ["This invitation is to join an existing group; do not send group."]])
+      }
+      guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
+      if accounts.contains(where: { $0.username == username }) { return .error(400, extra: ["errors": ["That username is taken."]]) }
+      guard let password = body["password"] as? String else { return .error(400, extra: ["errors": ["password is required."]]) }
+      // Unlike a join, no placeholder address is stored: the account needs a real one.
+      guard body["email"] is String else { return .error(400, extra: ["errors": ["Email cannot be null."]]) }
+      var made = Account(id: id(), username: username, password: password, role: "chapter", chapterId: groupId, name: body["name"] as? String)
+      made.penName = body["penName"] as? String
+      accounts.append(made)
+      let i = accounts.count - 1
+      if let refused = scheme(body, for: i, creating: true) { accounts.removeLast(); return refused }
+      for k in ["publicKey", "wrappedPrivateKey", "kdfSalt", "kdfParams", "recoveryWrappedPrivateKey", "recoverySalt", "recoveryKdfParams"] { if let v = body[k] { accounts[i].keys[k] = v } }
+      invitations[token] = (inv.kind, inv.chapter, "accepted", inv.activation)
+      let status = inv.kind == "group" && inv.activation == "admin_review" ? "pending" : "active"
+      return .json(["data": ["user": userJSON(accounts[i]), "chapter": ["id": groupId, "name": groupName, "accountStatus": status], "activation": status == "active" ? "immediate" : "admin_review"], "success": true, "status": 201], status: 201)
+
+    case ("GET", "/auth/pen-name"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      var answer = penNameLimits
+      answer["penName"] = a.penName ?? NSNull()
+      answer["names"] = a.penName.map { [["name": $0, "current": true, "since": "2026-09-01T00:00:00.000Z"]] } ?? []
+      return .data(answer)
+
     case ("GET", "/auth/login-params"):
       // Public, and never says whether an account exists: an unknown or plain name gets a made-up but stable salt.
       if predatesSplitAuth { return .error(404, info: "Cannot GET /auth/login-params") }
@@ -331,6 +379,11 @@ final class FakeAPI: @unchecked Sendable {
 
     case ("PUT", "/auth/user"):
       guard let a = caller(r), let target = body["id"] as? Int, let i = index(target) else { return .error(401, info: "Sign in.") }
+      if let penName = body["penName"] as? String {
+        if let refusal = penNameRefusal { return .error(409, info: "Error updating user.", extra: ["name": "PenNameLimitError", "error": refusal.error, "condition": refusal.condition]) }
+        accounts[i].penName = penName
+        return .data(["user": userJSON(accounts[i])])
+      }
       if let password = body["password"] as? String {
         if let refused = scheme(body, for: i, creating: false) { return refused }
         accounts[i].password = password

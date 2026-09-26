@@ -94,6 +94,8 @@ struct AccountView: View {
     Muted("@\(user.username)", font: Theme.bodyLarge)
     Text(role(user)).font(Theme.bodyMedium)
     Divider().overlay(Theme.rule)
+    // A writer's pen name: what the letters are signed with, and what a prisoner writes back to.
+    if user.role == Role.user { Button("Pen name") { app.push(.penName) }.buttonStyle(.link) }
     // For members of a group: the group's public numbers, and the one of them that a person types.
     if user.role == Role.chapter, user.chapterId != nil { Button("Your group's numbers") { app.push(.groupNumbers) }.buttonStyle(.link) }
     Button("Change password") { app.push(.changePassword) }.buttonStyle(.link)

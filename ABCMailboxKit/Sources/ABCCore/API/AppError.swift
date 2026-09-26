@@ -75,6 +75,9 @@ public enum AppError: Error, Equatable, Sendable {
   public var isChangedMeanwhile: Bool { if case .conflict(let text?, name: "LetterStatusError", _) = self { return text.contains("meanwhile") } else { return false } }
   /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
   public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError", _) = self { return true } else { return false } }
+  /// A pen name change the limits do not allow (API #127): `cooldown` (once every 90 days) or `new_names` (two
+  /// brand-new names a year). Nil for anything else.
+  public var penNameLimit: String? { if case .conflict(_, name: "PenNameLimitError", let condition) = self { return condition ?? "cooldown" } else { return nil } }
   public var isNotFound: Bool { if case .notFound = self { return true } else { return false } }
   /// Why something is gone. The API keeps a code for it (`expired`, `used`) but does not put it in the answer yet;
   /// what arrives is the sentence it builds from the code, "Claim token is expired." So the code is read back out

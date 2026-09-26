@@ -280,12 +280,50 @@ public final class SessionRepository {
   /// knows the split scheme (every account will, from the first push). A `400` (a taken username) does not spend
   /// the code: the person fixes it and sends the same code again.
   @discardableResult
-  public func join(code: String, username: String, password: String, email: String?, name: String?) async throws -> Session {
+  public func join(code: String, username: String, password: String, email: String?, name: String?, penName: String? = nil) async throws -> Session {
     let userName = username.trimmed
-    let split = try await splitSupported(userName)
-    var request = JoinRequest(code: code, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank)
-    var recoveryCode: String?
-    var madeHere: Sodium.KeyPair? // local to this join: a second join in flight must not see it
+    var request = JoinRequest(code: code, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank, penName: penName.map(PenName.normalise)?.nonBlank)
+    let made = try await fillNewAccount(&request, username: userName, password: password)
+    let envelope: APIEnvelope<JoinedDTO> = try await api.send("POST", "auth/join", body: request)
+    return try await finishNewAccount(made, userId: envelope.data?.user?.id, username: userName, password: password)
+  }
+
+  // MARK: - Invitations: how a group admin comes into being
+
+  /// What the token invites to; the token must already be normalised. Public and rate limited, so no token is sent.
+  public func invitationInfo(token: String) async throws -> InvitationInfo {
+    let envelope: APIEnvelope<InvitationInfoDTO> = try await api.get("invitation/invitation", query: [("token", token)], anonymous: true)
+    let d = try envelope.required("invitation")
+    return InvitationInfo(
+      kind: d.kind == "group" ? .group : .member, inviteeName: d.inviteeName?.nonBlank, groupName: d.chapter?.name?.nonBlank,
+      expiresAt: d.expiresAt.flatMap(parseInstant), waitsForReview: d.activation == "admin_review", groupFields: Set(d.groupFields ?? [])
+    )
+  }
+
+  /// Accepts: the account (a group admin) is made with keys made here, exactly as a join makes them, and signed in.
+  /// `group` goes only with a `group` invitation, limited to its `groupFields`. A refused acceptance leaves the
+  /// invitation usable, so the person fixes the form and sends it again. The group's own key is made after the
+  /// sign-in, by `GroupRepository.setUpKeys`, where the group has none and may act.
+  @discardableResult
+  public func acceptInvitation(token: String, info: InvitationInfo, username: String, password: String, email: String?, name: String?, penName: String?, group: NewGroupProfile?) async throws -> AcceptedInvitation {
+    let userName = username.trimmed
+    var request = AcceptInvitationRequest(token: token, username: userName, password: password, email: email?.trimmed.nonBlank, name: name?.trimmed.nonBlank, penName: penName.map(PenName.normalise)?.nonBlank)
+    if info.kind == .group, let group { request.group = GroupProfileDTO(group, allowed: info.groupFields) }
+    let made = try await fillNewAccount(&request, username: userName, password: password)
+    let envelope: APIEnvelope<AcceptedInvitationDTO> = try await api.send("POST", "invitation/accept", body: request)
+    let d = envelope.data
+    try await finishNewAccount(made, userId: d?.user?.id, username: userName, password: password)
+    return AcceptedInvitation(
+      groupName: d?.chapter?.name?.nonBlank ?? group?.name.trimmed.nonBlank ?? info.groupName ?? "your group",
+      waitsForReview: d.map { $0.activation == "admin_review" } ?? info.waitsForReview
+    )
+  }
+
+  /// The password and key fields of a new account made on this phone. In end-to-end mode the keypair is made here,
+  /// wrapped under the password and a new recovery code; split wherever the server knows the scheme, so the
+  /// password never leaves the phone. Returns what `finishNewAccount` needs once the server has made the account.
+  private func fillNewAccount<R: NewAccountRequest>(_ request: inout R, username: String, password: String) async throws -> (keyPair: Sodium.KeyPair?, recoveryCode: String?) {
+    let split = try await splitSupported(username)
     if try await modes.required() == .e2e {
       let fresh = split ? try await engine.createAccountKeysSplit(password: password) : try await engine.createAccountKeys(password: password)
       let f = fresh.fields
@@ -293,19 +331,24 @@ public final class SessionRepository {
       request.wrappedPrivateKey = f.password.wrapped; request.kdfSalt = f.password.salt; request.kdfParams = f.password.params
       request.recoveryWrappedPrivateKey = f.recovery.wrapped; request.recoverySalt = f.recovery.salt; request.recoveryKdfParams = f.recovery.params
       if let authKey = fresh.authKey { request.password = authKey; request.authScheme = Self.split }
-      recoveryCode = fresh.recoveryCode
-      // The key goes into the vault only once the account exists, below, under its new id.
-      madeHere = fresh.keyPair
-    } else if split {
+      // The key goes into the vault only once the account exists, under its new id. Local to this call:
+      // a second sign-up in flight must not see it.
+      return (fresh.keyPair, fresh.recoveryCode)
+    }
+    if split {
       let salt = engine.newSalt()
       let keys = try await engine.deriveSplit(password: password, salt: salt, params: KdfParams.standard)
       request.password = keys.authKey; request.authScheme = Self.split; request.kdfSalt = salt; request.kdfParams = .standard
       keys.wipe()
     }
-    let envelope: APIEnvelope<JoinedDTO> = try await api.send("POST", "auth/join", body: request)
-    if let made = envelope.data?.user, let keyPair = madeHere { vault.put(userId: made.id, keyPair: keyPair) }
-    let session = try await login(username: userName, password: password)
-    if let recoveryCode { pendingRecoveryCode = recoveryCode }
+    return (nil, nil)
+  }
+
+  @discardableResult
+  private func finishNewAccount(_ made: (keyPair: Sodium.KeyPair?, recoveryCode: String?), userId: Int?, username: String, password: String) async throws -> Session {
+    if let userId, let keyPair = made.keyPair { vault.put(userId: userId, keyPair: keyPair) }
+    let session = try await login(username: username, password: password)
+    if let recoveryCode = made.recoveryCode { pendingRecoveryCode = recoveryCode }
     return session
   }
 
