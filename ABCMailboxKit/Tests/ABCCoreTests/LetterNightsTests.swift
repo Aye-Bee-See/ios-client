@@ -91,7 +91,14 @@ final class LetterNightsTests: XCTestCase {
     let ids = try await queued(1)
     fake.intercept = { r in r.path == "/messaging/status" ? .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "Letter \(ids[0]) was changed by someone else meanwhile; nothing was moved."]) : nil }
     await assertThrowsAppError(try await group.setStatus(messageId: ids[0], status: .printed)) { XCTAssertTrue($0.isChangedMeanwhile) }
+    // The API since #133: the same 409 with `condition`, so a reworded sentence no longer matters.
+    fake.intercept = { r in r.path == "/messaging/status" ? .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "Another volunteer got to letter \(ids[0]) first.", "condition": "changed_meanwhile"]) : nil }
+    await assertThrowsAppError(try await group.setStatus(messageId: ids[0], status: .printed)) { XCTAssertTrue($0.isChangedMeanwhile) }
     XCTAssertFalse(AppError.conflict("A printed letter cannot move to queued.", name: "LetterStatusError").isChangedMeanwhile)
+    // API #133: the condition decides, whatever the sentence says; the word is only read when there is no condition.
+    XCTAssertTrue(AppError.conflict("Letter 7 was moved by another volunteer first.", name: "LetterStatusError", condition: "changed_meanwhile").isChangedMeanwhile)
+    XCTAssertFalse(AppError.conflict("Letter 7 was changed meanwhile.", name: "LetterStatusError", condition: "held").isChangedMeanwhile)
+    XCTAssertFalse(AppError.conflict("changed meanwhile", name: "KeyVersionError", condition: "changed_meanwhile").isChangedMeanwhile)
   }
 
   func testAGroupThatIsNotActiveIsNotOfferedAKeySetUpThatCanOnlyBeRefused() async throws {
