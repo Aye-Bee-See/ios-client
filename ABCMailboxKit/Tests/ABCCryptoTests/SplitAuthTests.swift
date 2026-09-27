@@ -16,6 +16,25 @@ final class SplitAuthTests: XCTestCase {
     XCTAssertEqual(keys.wrapKey, Data(repeating: 0, count: 32)); XCTAssertEqual(keys.authKey, Data(repeating: 0, count: 32))
   }
 
+  /// The first step, which had no vector here (ios-client #12): the API README's password → master, and on to the
+  /// two keys. Password `correct horse battery staple`, salt 00…0f, the agreed recipe.
+  func testThePasswordToMasterStepMatchesTheAPIsVector() throws {
+    let salt = Data((0..<16).map { UInt8($0) })
+    XCTAssertEqual(Sodium.toBase64(salt), "AAECAwQFBgcICQoLDA0ODw==")
+    XCTAssertEqual(KdfParams.standard, try KdfParams(kdf: "argon2id", alg: 2, opslimit: 2, memlimit: 67_108_864), "the agreed recipe")
+
+    let master = try KdfParams.standard.derive(secret: "correct horse battery staple", salt: salt)
+    XCTAssertEqual(Sodium.toBase64(master), "wFzkxN1+DkXuYBHMWdBoreR98bAfwM+c1GeL32ilt7A=")
+    let keys = try SplitAuth.derive(password: "correct horse battery staple", salt: salt)
+    XCTAssertEqual(Sodium.toBase64(keys.wrapKey), "tOggbVRmxTeDlXjvpt6YS1UxcYLSb8DRaDfpFMXoEv8=")
+    XCTAssertEqual(keys.authKeyBase64, "OY25VECyUEJUDcyPZSqK4R+oG5BvSzBlQNOrdiwgkR4=")
+
+    // NFKC: café with a precomposed é and with e + combining acute is one password.
+    for cafe in ["caf\u{E9}", "cafe\u{301}"] {
+      XCTAssertEqual(Sodium.toBase64(try KdfParams.standard.derive(secret: cafe, salt: salt)), "lEpmh4tmC0xaD5DhMboQo/3Hw7JqT3VThdqq0n1pImc=", cafe.debugDescription)
+    }
+  }
+
   func testFromAPasswordTheSameSaltAndRecipeGiveTheSameKeysAndAWrongPasswordOpensNothing() throws {
     let salt = Sodium.randomBytes(Sodium.saltBytes)
     let a = try SplitAuth.derive(password: "Tomatoes by Äugust", salt: salt), b = try SplitAuth.derive(password: "Tomatoes by A\u{308}ugust", salt: salt) // NFKC: the same password

@@ -110,7 +110,7 @@ struct ClaimView: View {
 
   @ViewBuilder private var tokenEntry: some View {
     Text("A support group created an account for you and gave you a one-time token. Enter it to take control of your correspondence.").font(Theme.bodyLarge)
-    LabeledField(label: "Claim token", hint: "24 letters and digits. Dashes, spaces, and lower case are fine. The letters I, L, O, and U are never used.") {
+    LabeledField(label: "Claim token", hint: "24 letters and digits. Dashes, spaces, and lower case are fine, and so is an O typed for a zero.") {
       TextField("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", text: $model.token)
         .font(Theme.mono)
         .textInputAutocapitalization(.characters).autocorrectionDisabled().keyboardType(.asciiCapable)

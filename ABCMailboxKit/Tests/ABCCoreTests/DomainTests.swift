@@ -15,8 +15,9 @@ final class ClaimTokenTests: XCTestCase {
     XCTAssertEqual(ClaimToken.problem("  "), "Enter the token your group gave you.")
     XCTAssertEqual(ClaimToken.problem(String(good.dropLast())), "That is 23 characters; a token has 24.")
     XCTAssertEqual(ClaimToken.problem(good + "A"), "That is 25 characters; a token has only 24.")
-    XCTAssertTrue(ClaimToken.problem("O" + good.dropFirst())!.contains("never contain the character O"))
-    XCTAssertFalse(ClaimToken.isWellFormed(good.prefix(3) + "L" + good.dropFirst(4)))
+    XCTAssertNil(ClaimToken.problem("O" + good.dropFirst()), "an O typed for a zero is folded, as the API folds it")
+    XCTAssertTrue(ClaimToken.problem("U" + good.dropFirst())!.contains("never contain the character U"))
+    XCTAssertFalse(ClaimToken.isWellFormed(good.prefix(3) + "U" + good.dropFirst(4)))
   }
 
   func testAClaimLinkYieldsItsTokenAndOtherLinksAreIgnored() {

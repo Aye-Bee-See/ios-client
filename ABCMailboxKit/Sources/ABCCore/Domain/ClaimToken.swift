@@ -20,7 +20,7 @@ public enum ClaimToken {
     let t = normalise(input)
     if t.isEmpty { return "Enter the token your group gave you." }
     if let bad = t.first(where: { !SecretCodes.alphabet.contains($0) }) {
-      return "Tokens never contain the character \(bad). Check for a look-alike (I, L, O, and U are not used)."
+      return "Tokens never contain the character \(bad). Check for a look-alike."
     }
     if t.count < length { return "That is \(t.count) characters; a token has \(length)." }
     if t.count > length { return "That is \(t.count) characters; a token has only \(length)." }

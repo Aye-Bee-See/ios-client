@@ -7,7 +7,11 @@ import Foundation
 ///
 /// Every client MUST normalise a typed code the same way before using it,
 /// because the normalised text is what goes into the key derivation: upper
-/// case, letters and digits only. "abcd-efgh" and "ABCDEFGH" are one code.
+/// case, letters and digits only, then `O` read as `0` and `I`, `L` as `1`
+/// (the API's rule, README "Typed codes"). "abcd-efgh" and "ABCDEFGH" are one
+/// code, and so are "O123…" and "0123…": a person reading a code off paper is
+/// forgiven the letter for the digit. Generated codes never contain I, L, O or
+/// U, so folding changes nothing that was typed correctly.
 public enum SecretCodes {
   public static let length = 24
   public static let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -19,7 +23,16 @@ public enum SecretCodes {
   }
 
   public static func normalise(_ input: String) -> String {
-    String(String.UnicodeScalarView(input.uppercased().unicodeScalars.filter(isLetterOrDigit)))
+    String(String.UnicodeScalarView(input.uppercased().unicodeScalars.filter(isLetterOrDigit).map(folded)))
+  }
+
+  /// The look-alikes the alphabet leaves out, read as the digits they are mistaken for.
+  private static func folded(_ scalar: Unicode.Scalar) -> Unicode.Scalar {
+    switch scalar {
+    case "O": return "0"
+    case "I", "L": return "1"
+    default: return scalar
+    }
   }
 
   public static func isWellFormed(_ input: String) -> Bool {
