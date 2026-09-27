@@ -9,6 +9,8 @@ final class GroupNumbersModel {
   var before = ""
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reason under the field (API #133).
+  private(set) var fields = FormErrors()
 
   @ObservationIgnored private let app: AppModel
   init(app: AppModel) { self.app = app }
@@ -27,7 +29,7 @@ final class GroupNumbersModel {
     if !typedSomething, let loaded = fresh.value ?? nil { before = String(loaded.before) }
   }
 
-  func edited() { error = nil }
+  func edited() { error = nil; fields = FormErrors() }
 
   func save() async {
     guard canSave, let typed else { return }
@@ -38,7 +40,13 @@ final class GroupNumbersModel {
       app.show("Saved.")
       await load() // the total, and whether it is shown to the public, are the server's to say
     } catch {
-      self.error = AppError.from(error).userMessage ?? "Could not save the number."
+      let e = AppError.from(error)
+      if case .validation = e {
+        fields = FormErrors(e, fields: ["lettersSentBefore": "number"])
+        self.error = fields.byField.isEmpty ? fields.general : nil
+      } else {
+        self.error = e.userMessage ?? "Could not save the number."
+      }
     }
   }
 }
@@ -77,7 +85,7 @@ struct GroupNumbersView: View {
       SectionTitle("How it is counted")
       KeyValue("Marked as mailed on this site", String(n.countedHere))
       let invalid = !model.before.isEmpty && model.typed == nil
-      LabeledField(label: "Letters you mailed before you used this site", hint: invalid ? "A whole number that is not negative." : "A whole number, your best honest estimate. It is added to what the site counts.", isError: invalid) {
+      LabeledField(label: "Letters you mailed before you used this site", hint: model.fields.byField["lettersSentBefore"] ?? (invalid ? "A whole number that is not negative." : "A whole number, your best honest estimate. It is added to what the site counts."), isError: invalid || model.fields.byField["lettersSentBefore"] != nil) {
         TextField("0", text: $model.before).keyboardType(.numberPad).accessibilityIdentifier("lettersSentBefore")
       }
       ErrorText(model.error)

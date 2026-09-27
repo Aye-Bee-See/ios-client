@@ -51,9 +51,15 @@ public struct FormErrors: Equatable, Sendable {
     switch (p.code, what) {
     case ("required", let what?): return "\(what) is needed."
     case ("length_out_of_range", let what?):
-      if let min = p.min, let max = p.max { return "\(what) must be \(min) to \(max) characters." }
+      if let min = p.min, let max = p.max { return min <= 0 ? "\(what) can be at most \(max) characters." : "\(what) must be \(min) to \(max) characters." }
       return p.message
     case ("not_unique", let what?): return "That \(what.lowercased()) is already taken. Choose another."
+    case ("out_of_range", let what?):
+      if let min = p.min, let max = p.max { return "\(what) must be from \(min) to \(max)." }
+      if let min = p.min { return "\(what) must be \(min) or more." }
+      // A maximum alone is not guessed at: the API's sentence says which limit it is.
+      return p.message
+    case ("not_a_number", let what?): return "\(what) must be a whole number."
     case ("not_an_email", _): return "That does not look like an email address."
     case ("not_a_url", _): return "That does not look like a web address. It should start with https://."
     case ("reserved_value", let what?): return "That \(what.lowercased()) is kept for the site's own use. Choose another."

@@ -11,6 +11,8 @@ struct AddWriterView: View {
   @State private var note = ""
   @State private var busy = false
   @State private var error: String?
+  /// A refusal's reasons, each under the field it is about (API #133).
+  @State private var fields = FormErrors()
 
   private var canSubmit: Bool { !busy && (3...32).contains(name.trimmingCharacters(in: .whitespaces).count) }
 
@@ -18,13 +20,13 @@ struct AddWriterView: View {
     Screen(horizontal: 24) {
       Text("Creates an account in your group's care. The writer can claim it and take independent control at any time, using a handoff token you generate later.").font(Theme.bodyLarge)
       Muted("Anonymous letters do not need an account. Use this only to follow one person's correspondence over time.")
-      LabeledField(label: "Name", hint: "Whatever they go by at your events. 3 to 32 characters. Not verified, not unique.") {
+      LabeledField(label: "Name", hint: fields.byField["name"] ?? "Whatever they go by at your events. 3 to 32 characters. Not verified, not unique.", isError: fields.byField["name"] != nil) {
         TextField("", text: $name).textContentType(.name).accessibilityIdentifier("writer-name")
       }
-      LabeledField(label: "Email (optional)") {
+      LabeledField(label: "Email (optional)", hint: fields.byField["email"], isError: fields.byField["email"] != nil) {
         TextField("", text: $email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
       }
-      LabeledField(label: "Internal note (optional)", hint: "Only your group sees this. Never shown to the writer.") {
+      LabeledField(label: "Internal note (optional)", hint: fields.byField["managerNote"] ?? "Only your group sees this. Never shown to the writer.", isError: fields.byField["managerNote"] != nil) {
         TextField("", text: $note, axis: .vertical).lineLimit(2...5)
       }
       ErrorText(error)
@@ -32,14 +34,14 @@ struct AddWriterView: View {
       Button(busy ? "Adding…" : "Add writer") { Task { await submit(thenWrite: false) } }.buttonStyle(.outlineWide).disabled(!canSubmit).accessibilityIdentifier("writer-add")
     }
     .disabled(busy)
-    .onChange(of: name + email + note) { error = nil }
+    .onChange(of: name + email + note) { error = nil; fields = FormErrors() }
     .navigationTitle("Add a writer")
     .navigationBarTitleDisplayMode(.inline)
   }
 
   private func submit(thenWrite: Bool) async {
     guard canSubmit else { return }
-    busy = true; error = nil
+    busy = true; error = nil; fields = FormErrors()
     defer { busy = false }
     do {
       let writer = try await app.container.group.addWriter(name: name, email: email, note: note)
@@ -48,7 +50,13 @@ struct AddWriterView: View {
         app.show("\(writer.name) added.")
       }
     } catch {
-      self.error = AppError.from(error).userMessage ?? "Could not add the writer."
+      let e = AppError.from(error)
+      if case .validation = e {
+        fields = FormErrors(e, fields: ["name": "name", "email": "email address", "managerNote": "note"])
+        self.error = fields.general
+      } else {
+        self.error = e.userMessage ?? "Could not add the writer."
+      }
     }
   }
 }
