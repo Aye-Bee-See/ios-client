@@ -137,4 +137,22 @@ final class LettersMapperTests: XCTestCase {
     XCTAssertEqual(label(20_480), "20 KB")
     XCTAssertEqual(label(5_767_168), "5.5 MB")
   }
+
+  func testAPhotoIsTheHostedOneWhenThereIsOneAndResolvesAgainstTheAPIInForce() throws {
+    func prisoner(_ json: String) throws -> Prisoner { try JSONDecoder().decode(PrisonerDTO.self, from: Data(json.utf8)).toDomain() }
+    let base = try XCTUnwrap(URL(string: "https://abctest.letters.support/"))
+
+    let hosted = try XCTUnwrap(try prisoner(#"{"id":41,"photoUrl":"https://support.example/jane.jpg","photo":{"url":"/prisoner/photo?prisoner=41","hosted":true,"credit":"ABC Belarus","updatedAt":"2026-09-26T10:04:00.000Z"}}"#).photo)
+    XCTAssertTrue(hosted.hosted); XCTAssertNil(hosted.offSiteHost)
+    XCTAssertEqual(hosted.credit, "ABC Belarus"); XCTAssertNotNil(hosted.updatedAt)
+    XCTAssertEqual(hosted.address(apiBase: base)?.absoluteString, "https://abctest.letters.support/prisoner/photo?prisoner=41")
+
+    // An API from before #130 has only the off-site link: it is taken as off-site, never loaded unasked.
+    let older = try XCTUnwrap(try prisoner(#"{"id":42,"photoUrl":"https://support.example/alex.jpg"}"#).photo)
+    XCTAssertFalse(older.hosted); XCTAssertEqual(older.offSiteHost, "support.example")
+    XCTAssertEqual(older.address(apiBase: base)?.absoluteString, "https://support.example/alex.jpg", "an absolute address ignores the base")
+
+    XCTAssertNil(try prisoner(#"{"id":43,"photo":null,"photoUrl":"  "}"#).photo, "no picture: the placeholder")
+    XCTAssertNil(PrisonerPhoto(url: "javascript:alert(1)", hosted: false).address(apiBase: base), "only web addresses load")
+  }
 }
