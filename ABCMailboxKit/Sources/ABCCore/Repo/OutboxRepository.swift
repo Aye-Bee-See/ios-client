@@ -53,6 +53,9 @@ public struct FlushOutcome: Equatable, Sendable {
   public var sent = 0
   public var refused = 0
   public var stillWaiting = 0
+  /// The server is limiting this account's writes (`429`, API #128) and said when to try again. Not a refusal:
+  /// a limited letter was not saved, and sending it later under the same key is safe.
+  public var limitedUntil: Date?
 }
 
 /// Letters written without a connection.
@@ -79,6 +82,12 @@ public final class OutboxRepository {
   @ObservationIgnored private let sessions: SessionRepository
   @ObservationIgnored private var flushing: Task<FlushOutcome, Never>?
   @ObservationIgnored private var monitor: NWPathMonitor?
+  /// Until when the server asked this account to stop sending (`Retry-After` on a `429`). Kept in memory only:
+  /// after a relaunch the next try simply asks again, and a refused request does not count against the limit.
+  @ObservationIgnored private(set) var limitedUntil: Date?
+  /// The clock, replaceable in tests.
+  @ObservationIgnored var now: () -> Date = Date.init
+  @ObservationIgnored private var resumeTask: Task<Void, Never>?
   /// Called after a flush that the person did not ask for (the network came back), so the app can say what happened.
   @ObservationIgnored public var onBackgroundFlush: (@MainActor (FlushOutcome) -> Void)?
 
@@ -223,6 +232,13 @@ public final class OutboxRepository {
   private func reallyFlush() async -> FlushOutcome {
     guard let userId = myId else { return FlushOutcome() }
     var outcome = FlushOutcome()
+    // Asked to wait: every trigger (the network, the app opening, "Send now") waits it out rather than asking again.
+    if let until = limitedUntil, until > now() {
+      outcome.limitedUntil = until
+      outcome.stillWaiting = entries(userId).filter { $0.refusedBecause == nil }.count
+      return outcome
+    }
+    limitedUntil = nil
     sending: for entry in entries(userId) where entry.refusedBecause == nil {
       switch await sendOne(entry, userId) {
       case .sent: outcome.sent += 1
@@ -234,6 +250,7 @@ public final class OutboxRepository {
     }
     if myId == userId { reload() }
     outcome.stillWaiting = entries(userId).filter { $0.refusedBecause == nil }.count
+    outcome.limitedUntil = limitedUntil
     return outcome
   }
 
@@ -251,6 +268,7 @@ public final class OutboxRepository {
         write(entry, userId)
       } catch {
         let e = AppError.from(error)
+        noteLimit(e)
         // Sent earlier, and deleted since (by the writer, on another device): it must not be sent again, and there is nothing to say.
         if e.isGone { remove(entry, userId); return .dropped }
         guard let reason = Self.refusal(e) else { return .later }
@@ -271,12 +289,29 @@ public final class OutboxRepository {
         entry.payload.attachments.removeAll { $0 == attachment }
         write(entry, userId)
       } catch {
-        guard let reason = Self.refusal(.from(error)) else { return .later }
+        let e = AppError.from(error)
+        noteLimit(e)
+        guard let reason = Self.refusal(e) else { return .later }
         return refuse(entry, userId, "The letter was sent, but \(attachment.name) could not be attached: \(reason)")
       }
     }
     remove(entry, userId)
     return .sent
+  }
+
+  /// A `429` says how long to wait (`Retry-After`, in seconds); without one, a minute.
+  private func noteLimit(_ e: AppError) {
+    guard case .rateLimited(_, let seconds) = e else { return }
+    let wait = TimeInterval(max(seconds ?? 60, 1))
+    limitedUntil = now().addingTimeInterval(wait)
+    // While the app runs, try again the moment the wait is over; nothing else would notice it ending.
+    resumeTask?.cancel()
+    resumeTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(wait + 1))
+      guard let self, !Task.isCancelled, self.hasWaiting else { return }
+      let outcome = await self.flush()
+      self.onBackgroundFlush?(outcome)
+    }
   }
 
   private func refuse(_ entry: Entry, _ userId: Int, _ reason: String) -> Step {
