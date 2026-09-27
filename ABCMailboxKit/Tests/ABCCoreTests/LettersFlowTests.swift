@@ -68,6 +68,40 @@ final class LettersFlowTests: XCTestCase {
     XCTAssertNil(request.json["messageText"]); XCTAssertNotNil(request.json["ciphertext"])
   }
 
+  /// `400` with `problems[].code == "wrong_encryption_mode"`, as the API sends it since #133.
+  private func wrongMode() -> Stubbed {
+    .error(400, info: nil, extra: ["errors": ["End-to-end mode: send ciphertext and nonce, not messageText or relayNote."],
+                                   "problems": [["field": NSNull(), "code": "wrong_encryption_mode"]]])
+  }
+
+  func testAServerThatSwitchedToEndToEndWhileTheAppWasOpenGetsTheLetterSealedOnTheRetry() async throws {
+    fake.mode = "server"
+    try await signIn()
+    XCTAssertEqual(app.container.modes.mode, .server)
+    // The switch: the server is end-to-end now, and refuses the plain letter once.
+    fake.mode = "e2e"
+    fake.intercept = { [self] r in r.path == "/messaging/message" && r.method == "POST" ? wrongMode() : nil }
+
+    let sent = try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: nil, idempotencyKey: "k-mode"))
+    XCTAssertEqual(sent.body, "Dear friend")
+    XCTAssertEqual(app.container.modes.mode, .e2e, "the refusal made the app ask /health again")
+    let posts = app.requests(to: "/messaging/message", method: "POST")
+    XCTAssertEqual(posts.count, 2)
+    XCTAssertNotNil(posts[0].json["messageText"]); XCTAssertNil(posts[1].json["messageText"]); XCTAssertNotNil(posts[1].json["ciphertext"])
+    XCTAssertEqual(posts.map { $0.headers["Idempotency-Key"] }, ["k-mode", "k-mode"], "a refused 400 left the key free")
+  }
+
+  func testWhenTheModeHasNotChangedTheWriterIsToldToUpdateTheApp() async throws {
+    try await signIn()
+    fake.intercept = { [self] r in r.path == "/messaging/message" && r.method == "POST" ? wrongMode() : nil }
+    await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: nil))) {
+      XCTAssertEqual($0, .wrongEncryptionMode)
+      XCTAssertTrue($0.readable.contains("Update the app"))
+    }
+    XCTAssertEqual(app.requests(to: "/messaging/message", method: "POST").count, 1, "no second try when nothing changed")
+    XCTAssertEqual(OutboxRepository.refusal(.wrongEncryptionMode), AppError.wrongEncryptionMode.userMessage, "the outbox keeps it and says why")
+  }
+
   func testARelayGroupWithoutKeysCannotBeWrittenToAndSaysSo() async throws {
     try await signIn()
     await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: 9))) {

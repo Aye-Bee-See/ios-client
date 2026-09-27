@@ -48,7 +48,7 @@ public final class LettersRepository {
 
   public func send(_ letter: NewLetter) async throws -> Letter {
     let headers = letter.idempotencyKey.map { ["Idempotency-Key": $0] } ?? [:]
-    var rotations = 0, waits = 0
+    var rotations = 0, waits = 0, modeChecks = 0
     while true {
       // In end-to-end mode every attempt encrypts afresh. That is fine under one Idempotency-Key: the
       // server does not compare ciphertext, and hands back the first attempt's letter if there was one.
@@ -65,6 +65,11 @@ public final class LettersRepository {
         // new public key and version) and retry once.
         rotations += 1
         await codec.refreshKeys()
+      } catch AppError.wrongEncryptionMode where modeChecks == 0 {
+        // The server switched modes since this app last asked: encode again in its mode and send once more.
+        // A refused 400 left nothing under the key (API #132), so the same key is still fresh.
+        modeChecks += 1
+        guard await codec.modeChanged() else { throw AppError.wrongEncryptionMode }
       }
     }
   }

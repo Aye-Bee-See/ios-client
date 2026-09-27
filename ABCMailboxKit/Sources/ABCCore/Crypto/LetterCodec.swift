@@ -83,6 +83,14 @@ final class LetterCodec {
 
   func isEndToEnd() async -> Bool { await modes.current() == .e2e }
 
+  /// Asks `/health` again after a `wrong_encryption_mode` refusal. True when the server now speaks another mode
+  /// than the one this app last knew (it switched while the app was open), so encoding again is the fix.
+  func modeChanged() async -> Bool {
+    let before = modes.mode
+    let after = await modes.refresh()
+    return after != .unknown && after != before
+  }
+
   /// For sending: whether to encrypt, and `.network` while the server has not said which mode it speaks.
   func sendsEndToEnd() async throws -> Bool { try await modes.required() == .e2e }
 

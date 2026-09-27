@@ -31,6 +31,10 @@ public enum AppError: Error, Equatable, Sendable {
   /// request with a 200 and HTML), and for the directory it is as good as offline.
   case unreadable(String)
   case unexpected(String)
+  /// `400 wrong_encryption_mode` (API #133): the letter was sent in the wrong shape for the server's mode, text in
+  /// the clear to an end-to-end server or the other way round. `LettersRepository.send` asks `/health` again and
+  /// retries once when the server's mode has changed; what reaches a screen means this build cannot write to it.
+  case wrongEncryptionMode
 
   /// The sentence to show a person, when one exists.
   public var userMessage: String? {
@@ -45,6 +49,7 @@ public enum AppError: Error, Equatable, Sendable {
       return "Too many attempts. Try again later."
     case .server(_, let info): return info
     case .network, .unreadable, .unexpected: return nil
+    case .wrongEncryptionMode: return "This version of the app cannot send letters to this server, which protects them in a way the app does not know. Update the app, then send the letter again."
     }
   }
 
