@@ -66,28 +66,26 @@ public struct Facility: Equatable, Identifiable, Sendable {
   public var shortLocation: String { [addressLines.last, country].compactMap { $0 }.joined(separator: ", ") }
 }
 
-/// A prisoner's photograph (API #130). A hosted one is served by the API itself, needs no token, and tells no
-/// other site who is looking; an off-site one is a link to somebody else's site, which learns who loads it.
+/// A prisoner's photograph, hosted by the API (API #130): it needs no token and tells no other site who is
+/// looking. Only hosted pictures are shown; a link to somebody else's site never is.
 public struct PrisonerPhoto: Equatable, Sendable {
-  /// As the API gives it: relative to the API base when hosted, absolute when off-site.
+  /// As the API gives it, relative to the API base.
   public let url: String
-  public let hosted: Bool
   /// Where the picture came from, or whose permission it is there by. Shown beside it.
   public let credit: String?
   public let updatedAt: Date?
 
-  public init(url: String, hosted: Bool, credit: String? = nil, updatedAt: Date? = nil) {
-    self.url = url; self.hosted = hosted; self.credit = credit; self.updatedAt = updatedAt
+  public init(url: String, credit: String? = nil, updatedAt: Date? = nil) {
+    self.url = url; self.credit = credit; self.updatedAt = updatedAt
   }
 
-  /// The address to load, against the API base in force. Nil for anything that is not a web address.
+  /// The address to load, on the API in force. Nil for anything that would leave it.
   public func address(apiBase: URL) -> URL? {
-    guard let resolved = URL(string: url, relativeTo: apiBase)?.absoluteURL, ["http", "https"].contains(resolved.scheme?.lowercased() ?? "") else { return nil }
+    guard let resolved = URL(string: url, relativeTo: apiBase)?.absoluteURL,
+          resolved.scheme?.lowercased() == apiBase.scheme?.lowercased(), resolved.host == apiBase.host, resolved.port == apiBase.port
+    else { return nil }
     return resolved
   }
-
-  /// The other site's name, to say whose server an off-site picture would come from.
-  public var offSiteHost: String? { hosted ? nil : URL(string: url)?.host }
 }
 
 public struct Prisoner: Equatable, Identifiable, Sendable {

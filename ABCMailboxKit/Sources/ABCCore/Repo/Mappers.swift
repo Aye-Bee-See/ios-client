@@ -58,9 +58,8 @@ extension PrisonerDTO {
       estimatedRelease: estimatedRelease?.nonBlank,
       bio: bio?.nonBlank,
       interests: (interests ?? []).filter { !$0.isBlank },
-      // `photo` (API #130) wins; an API from before it has only the off-site link, taken as off-site.
-      photo: photo.flatMap { p in p.url?.nonBlank.map { PrisonerPhoto(url: $0, hosted: p.hosted ?? false, credit: p.credit?.nonBlank, updatedAt: p.updatedAt.instant) } }
-        ?? photoUrl?.nonBlank.map { PrisonerPhoto(url: $0, hosted: false) },
+      // Hosted pictures only (API #130). A link to another site would tell that site who looks at whom.
+      photo: photo.flatMap { p in p.hosted == true ? p.url?.nonBlank.map { PrisonerPhoto(url: $0, credit: p.credit?.nonBlank, updatedAt: p.updatedAt.instant) } : nil },
       supportWebsite: supportWebsite?.nonBlank,
       donationInfo: donationInfo?.nonBlank,
       status: status,

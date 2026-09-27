@@ -18,8 +18,6 @@ struct PrisonerDTO: Decodable {
   let estimatedRelease: String?
   let bio: String?
   let interests: [String]?
-  /// A link to somebody else's site. Kept for an API from before photos were hosted (API #130); `photo` wins.
-  let photoUrl: String?
   let photo: PhotoDTO?
   let supportWebsite: String?
   let donationInfo: String?
@@ -33,12 +31,12 @@ struct PrisonerDTO: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case id, birthName, chosenName, aliases, prison, country, inmateID, releaseDate, detainedSince, sentence, charges
-    case estimatedRelease, bio, interests, photoUrl, photo, supportWebsite, donationInfo, status, statusNotice, featured, verifiedBy, verifiedAt
+    case estimatedRelease, bio, interests, photo, supportWebsite, donationInfo, status, statusNotice, featured, verifiedBy, verifiedAt
     case prisonDetails = "prison_details", supportGroups = "support_groups"
   }
 }
 
-/// `photo` on a prisoner row (API #130): the hosted picture, or the off-site link when there is none.
+/// `photo` on a prisoner row (API #130). Only a hosted one is used: `hosted: false` is a link to another site.
 struct PhotoDTO: Decodable {
   let url: String?
   let hosted: Bool?
