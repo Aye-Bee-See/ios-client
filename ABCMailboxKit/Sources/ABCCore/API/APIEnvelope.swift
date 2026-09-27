@@ -17,8 +17,16 @@ struct APIEnvelope<T: Decodable>: Decodable {
   let pageSize: Int?
   /// Only on the notification feed: how many entries the account has not read.
   let unread: Int?
+  /// On every `400` since API #133: one entry per sentence in `errors`, in the same order, with a code to act on.
+  let problems: [Problem]?
 
-  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, condition, total, page, unread, pageSize = "page_size" }
+  struct Problem: Decodable {
+    /// The path in the request body (`group.name`), or nil when the refusal is about the request as a whole.
+    let field: String?
+    let code: String?
+  }
+
+  private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, condition, total, page, unread, problems, pageSize = "page_size" }
 
   /// The payload, or an error a screen can show when the server sent none.
   func required(_ what: String = "response") throws -> T {

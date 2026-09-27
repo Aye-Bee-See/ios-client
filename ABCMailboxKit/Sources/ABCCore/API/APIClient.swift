@@ -146,6 +146,8 @@ public final class APIClient: Sendable {
     let info = envelope?.info ?? envelope?.error
     switch status {
     case 400:
+      // The letter is in the wrong shape for the server's mode: not something the writer can fix in the form.
+      if envelope?.problems?.contains(where: { $0.code == "wrong_encryption_mode" }) == true { return .wrongEncryptionMode }
       if let errors = envelope?.errors, !errors.isEmpty { return .validation(errors) }
       return .validation([info ?? "The request was rejected."])
     case 401: return .unauthorized(info)

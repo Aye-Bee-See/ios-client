@@ -138,4 +138,13 @@ final class APIClientTests: XCTestCase {
     let r = try XCTUnwrap(StubServer.requests(id).first)
     XCTAssertEqual(r.pathAndQuery, "/prisoner/prisoners?page=2&q=ales")
   }
+
+  func testA400ReadsItsProblemCodesAndOnlyWrongEncryptionModeIsItsOwnError() async {
+    let wrong = await failure(400, #"{"success":false,"errors":["End-to-end mode: send ciphertext and nonce, not messageText or relayNote."],"problems":[{"field":null,"code":"wrong_encryption_mode"}]}"#)
+    XCTAssertEqual(wrong, .wrongEncryptionMode)
+    let taken = await failure(400, #"{"success":false,"errors":["That username is taken."],"problems":[{"field":"username","code":"not_unique","params":{"fields":["username"]}}]}"#)
+    XCTAssertEqual(taken, .validation(["That username is taken."]), "every other code keeps its sentence")
+    let older = await failure(400, #"{"success":false,"errors":["That username is taken."]}"#)
+    XCTAssertEqual(older, .validation(["That username is taken."]), "an API from before #133 sends no problems")
+  }
 }
