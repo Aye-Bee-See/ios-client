@@ -24,6 +24,10 @@ struct RecoveryCodeView: View {
       }
       .buttonStyle(.outline)
       AlertBanner("Write it on paper or put it in a password manager. Do not keep it only on this phone, and do not send it to anyone.")
+      // Agreed wording for the site, both apps and the guide (decisions-made, 22 September): said where the code is
+      // first shown, not left for help.
+      Text("If you lose both your password and your recovery code, your letters cannot be recovered by anyone — not your group, not us.")
+        .font(Theme.bodyLarge.weight(.semibold))
       CheckboxRow(text: "I have saved this code somewhere safe.", isOn: $saved).accessibilityIdentifier("recovery-saved")
       Button("Continue", action: onSaved).buttonStyle(.primary).disabled(!saved).accessibilityIdentifier("recovery-continue")
     }
