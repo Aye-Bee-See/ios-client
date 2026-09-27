@@ -65,12 +65,31 @@ public final class LettersRepository {
         // new public key and version) and retry once.
         rotations += 1
         await codec.refreshKeys()
+      } catch let e as AppError where e.isNotFound {
+        throw await Self.prisonerGone(letter.prisonerId, api: api) ? Self.prisonerGoneError : e
       } catch AppError.wrongEncryptionMode where modeChecks == 0 {
         // The server switched modes since this app last asked: encode again in its mode and send once more.
         // A refused 400 left nothing under the key (API #132), so the same key is still fresh.
         modeChecks += 1
         guard await codec.modeChanged() else { throw AppError.wrongEncryptionMode }
       }
+    }
+  }
+
+  /// Said when the letter's prisoner has left the directory (taken down, or back under review): API #156 answers
+  /// that `404 not_found`, the same as a prisoner that never existed.
+  public static let prisonerGoneError = AppError.notFound("This person is no longer in the directory, so the letter cannot be sent. Your group can tell you why, and whether there is another way to reach them.")
+
+  /// A send's `404` names no field, and only its English sentence says it was the prisoner. So the directory is
+  /// asked instead, on the API itself and never the saved copy, which may still list them.
+  static func prisonerGone(_ id: Int, api: APIClient) async -> Bool {
+    do {
+      let _: APIEnvelope<JSONValue> = try await api.get("prisoner/prisoner", query: [("id", String(id))])
+      return false
+    } catch let e as AppError {
+      return e.isNotFound
+    } catch {
+      return false
     }
   }
 

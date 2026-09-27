@@ -102,6 +102,32 @@ final class LettersFlowTests: XCTestCase {
     XCTAssertEqual(OutboxRepository.refusal(.wrongEncryptionMode), AppError.wrongEncryptionMode.userMessage, "the outbox keeps it and says why")
   }
 
+  /// API #156: a prisoner taken out of the directory answers `404 not_found`, exactly like one that never existed.
+  func testALetterToSomeoneNoLongerInTheDirectorySaysSoInPlainWords() async throws {
+    var listed = false
+    let fake = fake!
+    app = TestApp { r in
+      if r.path == "/messaging/message", r.method == "POST" {
+        return .error(404, info: "Error creating message", extra: ["name": "NotFoundError", "code": "not_found", "error": "Prisoner 3 not found"])
+      }
+      if r.path == "/prisoner/prisoner" {
+        return listed ? .data(["id": 3, "chosenName": "Jane"]) : .error(404, info: "Error retrieving prisoner", extra: ["name": "NotFoundError", "code": "not_found", "error": "Prisoner 3 not found"])
+      }
+      return fake.handle(r)
+    }
+    try await signIn()
+
+    await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear Jane", relayNote: nil, relayChapter: nil))) {
+      XCTAssertEqual($0, LettersRepository.prisonerGoneError)
+      XCTAssertEqual(OutboxRepository.refusal($0), LettersRepository.prisonerGoneError.userMessage, "the outbox keeps it, and says the same")
+    }
+    // Still listed: the 404 was about something else, so the server's own sentence stands.
+    listed = true
+    await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear Jane", relayNote: nil, relayChapter: nil))) {
+      XCTAssertEqual($0, .notFound("Prisoner 3 not found"))
+    }
+  }
+
   func testARelayGroupWithoutKeysCannotBeWrittenToAndSaysSo() async throws {
     try await signIn()
     await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: 9))) {
