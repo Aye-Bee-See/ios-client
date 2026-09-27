@@ -36,6 +36,9 @@ struct Stubbed {
   static func data(_ data: Any, extra: [String: Any] = [:]) -> Stubbed {
     json(["data": data, "success": true, "status": 200].merging(extra) { $1 })
   }
+  /// The same answer with headers added, e.g. `Retry-After` on a 429.
+  func with(headers more: [String: String]) -> Stubbed { var s = self; s.headers.merge(more) { $1 }; return s }
+
   static func text(_ text: String, status: Int = 200) -> Stubbed { Stubbed(status: status, body: Data(text.utf8)) }
   static func error(_ status: Int, info: String? = nil, extra: [String: Any] = [:]) -> Stubbed {
     var o: [String: Any] = ["success": false, "status": status]

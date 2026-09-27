@@ -66,7 +66,13 @@ struct OutboxSection: View {
     trying = true
     defer { trying = false }
     let outcome = await app.container.outbox.flush()
-    if outcome.sent == 0, outcome.refused == 0, outcome.stillWaiting > 0 { app.show("Still no connection to the server. The letters are safe here.") } else { app.report(outcome) }
+    if let until = outcome.limitedUntil, outcome.sent == 0, outcome.refused == 0 {
+      app.show(OutboxNotifier.limitText(until))
+    } else if outcome.sent == 0, outcome.refused == 0, outcome.stillWaiting > 0 {
+      app.show("Still no connection to the server. The letters are safe here.")
+    } else {
+      app.report(outcome)
+    }
   }
 }
 
@@ -81,6 +87,12 @@ struct OutboxNotifier {
     if outcome.sent == 1 { parts.append("A letter you wrote offline has been sent.") } else if outcome.sent > 1 { parts.append("\(outcome.sent) letters you wrote offline have been sent.") }
     if outcome.refused == 1 { parts.append("A letter could not be sent. Open the app to see why.") } else if outcome.refused > 1 { parts.append("\(outcome.refused) letters could not be sent. Open the app to see why.") }
     return parts.isEmpty ? nil : parts.joined(separator: " ")
+  }
+
+  /// The server is pacing this account's writes: say when the waiting letters go, not "no connection".
+  static func limitText(_ until: Date) -> String {
+    let minutes = max(1, Int((until.timeIntervalSinceNow / 60).rounded(.up)))
+    return "The server has taken a lot from this account in the last hour. Your letters are safe here and will be sent from \(until.formatted(date: .omitted, time: .shortened)), in about \(minutes) minute\(minutes == 1 ? "" : "s")."
   }
 
   /// Asked the first time a letter is queued, when the reason is plain: "tell me when it has gone".

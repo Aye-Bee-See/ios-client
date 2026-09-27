@@ -54,6 +54,32 @@ final class OutboxTests: XCTestCase {
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outboxFolder.path), [], "nothing is left behind")
   }
 
+  func testA429IsNotARefusalAndTheOutboxWaitsOutRetryAfterBeforeAskingAgain() async throws {
+    var clock = Date(timeIntervalSince1970: 1_800_000_000)
+    outbox.now = { clock }
+    try outbox.queue(prisonerName: "Jane Smith", writingAs: nil, letter: letter(key: "k-429"), attachments: [])
+    fake.intercept = { r in
+      r.path == "/messaging/message" && r.method == "POST"
+        ? .error(429, info: "Too many letters and replies. Try again in 2 minute(s).", extra: ["name": "RateLimitError"]).with(headers: ["Retry-After": "120"])
+        : nil
+    }
+
+    let limited = await outbox.flush()
+    XCTAssertEqual(limited, FlushOutcome(sent: 0, refused: 0, stillWaiting: 1, limitedUntil: clock.addingTimeInterval(120)))
+    XCTAssertNil(outbox.items.first?.problem, "a limited letter was not saved, and is not refused: it waits")
+
+    clock += 60
+    let early = await outbox.flush()
+    XCTAssertEqual(early.limitedUntil, Date(timeIntervalSince1970: 1_800_000_120))
+    XCTAssertEqual(app.requests(to: "/messaging/message", method: "POST").count, 1, "no request before Retry-After is up")
+
+    clock += 61
+    let later = await outbox.flush()
+    XCTAssertEqual(later, FlushOutcome(sent: 1, refused: 0, stillWaiting: 0))
+    let keys = app.requests(to: "/messaging/message", method: "POST").map { $0.headers["Idempotency-Key"] }
+    XCTAssertEqual(keys, ["k-429", "k-429"], "the same key on the retry, so the server can never make two")
+  }
+
   func testALetterThatArrivedAlthoughThePhoneNeverHeardSoIsNotSentTwice() async throws {
     // The compose screen's attempt reaches the server, and the answer is lost in a tunnel.
     fake.loseAnswerTo = { $0.path == "/messaging/message" }
@@ -110,7 +136,9 @@ final class OutboxTests: XCTestCase {
     for answer in [Stubbed.error(503, info: "Down for maintenance."), .text("<html>Accept the terms to continue.</html>"), .error(429, info: "Slow down.")] {
       fake.intercept = { $0.path == "/messaging/message" ? answer : nil }
       let outcome = await outbox.flush()
-      XCTAssertEqual(outcome, FlushOutcome(sent: 0, refused: 0, stillWaiting: 2))
+      XCTAssertEqual([outcome.sent, outcome.refused, outcome.stillWaiting], [0, 0, 2])
+      // Only a 429 says how long to wait: without Retry-After, a minute.
+      XCTAssertEqual(outcome.limitedUntil != nil, answer.status == 429)
     }
     XCTAssertEqual(app.requests(to: "/messaging/message", method: "POST").count, 3, "no point trying the next letter through the same broken connection")
     XCTAssertEqual(OutboxRepository.refusal(.conflict("Still working on it.", name: "IdempotencyError")), nil)
