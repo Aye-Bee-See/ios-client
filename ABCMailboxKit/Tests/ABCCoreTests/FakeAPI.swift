@@ -69,9 +69,9 @@ final class FakeAPI: @unchecked Sendable {
   var inviteCodes: [String: (batch: String, chapter: Int, state: String)] = [:]
   /// Invitations by normalised token. `state` is `pending`, `accepted`, `expired` or `revoked`.
   var invitations: [String: (kind: String, chapter: Int?, state: String, activation: String)] = [:]
-  /// As the API answers a taken username at join, claim and acceptance (checked against API main, 27 September): the
-  /// clash is found when the account is written, so the sentence is under `error`, and its problem names no field.
-  static let usernameTaken = Stubbed.error(400, info: "Error joining with the invite code.", extra: ["name": "SequelizeUniqueConstraintError", "error": "Username already in use.", "problems": [["field": NSNull(), "code": "validation_failed"]]])
+  /// As the API answers a taken username at join, claim and acceptance since #142 (checked against API main): the
+  /// sentence under `errors`, and beside it the field and `not_unique`.
+  static let usernameTaken = Stubbed.error(400, extra: ["errors": ["Username already in use."], "problems": [["field": "username", "code": "not_unique", "params": ["fields": ["username"]]]]])
   static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
   /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
   var penNameLimits: [String: Any] = ["changeAllowedAt": NSNull(), "newNamesLeft": 2, "newNamesWindowEnds": NSNull(), "cooldownDays": 90, "newPerYear": 2]

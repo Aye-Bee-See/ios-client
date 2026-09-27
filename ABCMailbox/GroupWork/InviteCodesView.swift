@@ -20,6 +20,8 @@ final class InviteCodesModel {
   var label = ""
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reasons, each under the field it is about (API #133).
+  private(set) var fields = FormErrors()
   /// The slips as a PDF file, for printing or sharing.
   private(set) var pdf: URL?
 
@@ -38,9 +40,11 @@ final class InviteCodesModel {
     if fresh.value != nil || quota.value == nil { quota = fresh }
   }
 
+  func labelEdited() { if fields.byField["label"] != nil { fields = FormErrors(); error = nil } }
+
   func issue() async {
     guard canIssue else { return }
-    busy = true; error = nil
+    busy = true; error = nil; fields = FormErrors()
     defer { busy = false }
     guard let groupName else { return }
     do {
@@ -51,7 +55,13 @@ final class InviteCodesModel {
       label = ""
       await load()
     } catch {
-      self.error = AppError.from(error).userMessage ?? "Could not issue the codes."
+      let e = AppError.from(error)
+      if case .validation = e {
+        fields = FormErrors(e, fields: ["label": "label"])
+        self.error = fields.general
+      } else {
+        self.error = e.userMessage ?? "Could not issue the codes."
+      }
     }
   }
 
@@ -130,12 +140,13 @@ struct InviteCodesView: View {
     Text("Print slips for a letter night, or for anyone your group vouches for. A newcomer types the code into the app and the account is theirs from the start: your group vouches, and never sees what they write.").font(Theme.bodyLarge)
     Muted("Your group sees counts only. The server keeps no link between a code and the account it made.")
     Stepper("Codes to print: \(model.count)", value: $model.count, in: 1...50).font(Theme.bodyLarge)
-    LabeledField(label: "Label (optional)", hint: "So the list says which slips these were: \"Letter night, 2 October\".", isError: model.label.count > 80) {
+    LabeledField(label: "Label (optional)", hint: model.fields.byField["label"] ?? "So the list says which slips these were: \"Letter night, 2 October\".", isError: model.label.count > 80 || model.fields.byField["label"] != nil) {
       TextField("", text: $model.label)
     }
     ErrorText(model.error)
     Button(model.busy ? "Printing…" : "Print \(Format.plural(model.count, "code"))") { Task { await model.issue() } }
       .buttonStyle(.primary).disabled(!model.canIssue).accessibilityIdentifier("issueCodes")
+      .onChange(of: model.label) { model.labelEdited() }
   }
 
   /// The codes, once. Each slip: the code in fours, the group's name, the date, the QR that opens the app.

@@ -41,6 +41,19 @@ final class FormErrorsTests: XCTestCase {
     XCTAssertEqual(FormErrors(.validation(["That username is taken."]), fields: account).byField, [:])
   }
 
+  /// The group forms' own cases, with the params the API sends for them (checked against API main).
+  func testTheGroupFormsLimitsReadAsTheAppsWords() {
+    func one(_ field: String, _ code: String, min: Int? = nil, max: Int? = nil, _ message: String, label: String) -> String? {
+      FormErrors(.validation([message], problems: [FieldProblem(field: field, code: code, min: min, max: max, message: message)]), fields: [field: label]).byField[field]
+    }
+    XCTAssertEqual(one("label", "length_out_of_range", min: 0, max: 80, "label can be at most 80 characters.", label: "label"), "Label can be at most 80 characters.")
+    XCTAssertEqual(one("name", "length_out_of_range", min: 3, max: 32, "Name must be between 3 and 32 characters.", label: "name"), "Name must be 3 to 32 characters.")
+    XCTAssertEqual(one("lettersSentBefore", "out_of_range", min: 0, max: 100000, "x", label: "number"), "Number must be from 0 to 100000.")
+    XCTAssertEqual(one("lettersSentBefore", "out_of_range", max: 0, "lettersSentBefore cannot be negative.", label: "number"), "lettersSentBefore cannot be negative.", "a maximum alone is the API's to word")
+    XCTAssertEqual(one("lettersSentBefore", "not_a_number", "lettersSentBefore must be a whole number.", label: "number"), "Number must be a whole number.")
+    XCTAssertEqual(one("managerNote", "validation_failed", "managerNote is too long.", label: "note"), "managerNote is too long.")
+  }
+
   func testAPenNameCheckSaysTakenInTheAppsWordsAndOtherwiseTheAPIs() {
     XCTAssertEqual(PenNameCheck(name: "Ada Lovelace", available: false, reason: "That pen name is taken.", twoParts: true, reasonCode: "not_unique").refusal,
                    "Ada Lovelace is taken. A pen name once used stays with the person who used it, so choose another.")
@@ -49,9 +62,8 @@ final class FormErrorsTests: XCTestCase {
     XCTAssertNil(PenNameCheck(name: "Ada", available: true, reason: nil, twoParts: false).refusal)
   }
 
-  /// Today's API names no field for a username clash, so the sentence is the general line. Once it names the
-  /// field (as the #133 proposal described), the unit tests above cover it landing under the box.
-  func testJoiningWithATakenUsernameSaysSoInTheAPIsWords() async throws {
+  /// Since API #142 a username clash names its field, so it lands under the username box.
+  func testJoiningWithATakenUsernameComesBackUnderTheUsernameField() async throws {
     let fake = FakeAPI()
     fake.mode = "e2e"
     fake.accounts = [FakeAPI.Account(id: 3, username: "taken", password: "x")]
@@ -62,8 +74,8 @@ final class FormErrorsTests: XCTestCase {
       XCTFail("expected a refusal")
     } catch {
       let f = FormErrors(AppError.from(error), fields: account)
-      XCTAssertEqual(f.byField, [:])
-      XCTAssertEqual(f.general, "Username already in use.", "not \"Error joining with the invite code.\"")
+      XCTAssertEqual(f.byField, ["username": "That username is already taken. Choose another."])
+      XCTAssertEqual(f.general, "Check the fields marked in red.")
     }
   }
 }
