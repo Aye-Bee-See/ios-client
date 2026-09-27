@@ -69,6 +69,9 @@ final class FakeAPI: @unchecked Sendable {
   var inviteCodes: [String: (batch: String, chapter: Int, state: String)] = [:]
   /// Invitations by normalised token. `state` is `pending`, `accepted`, `expired` or `revoked`.
   var invitations: [String: (kind: String, chapter: Int?, state: String, activation: String)] = [:]
+  /// As the API answers a taken username at join, claim and acceptance (checked against API main, 27 September): the
+  /// clash is found when the account is written, so the sentence is under `error`, and its problem names no field.
+  static let usernameTaken = Stubbed.error(400, info: "Error joining with the invite code.", extra: ["name": "SequelizeUniqueConstraintError", "error": "Username already in use.", "problems": [["field": NSNull(), "code": "validation_failed"]]])
   static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
   /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
   var penNameLimits: [String: Any] = ["changeAllowedAt": NSNull(), "newNamesLeft": 2, "newNamesWindowEnds": NSNull(), "cooldownDays": 90, "newPerYear": 2]
@@ -279,7 +282,7 @@ final class FakeAPI: @unchecked Sendable {
       let chapter: [String: Any] = ["id": c.chapter, "name": "Test Chapter"]
       if r.method == "GET" { return .data(["chapter": chapter, "expiresAt": inviteBatches[c.batch].map { $0.expiresAt as Any } ?? NSNull()]) }
       guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
-      if accounts.contains(where: { $0.username == username }) { return .error(400, extra: ["errors": ["That username is taken."]]) }
+      if accounts.contains(where: { $0.username == username }) { return Self.usernameTaken }
       guard body["password"] is String else { return .error(400, extra: ["errors": ["password is required."]]) }
       var made = Account(id: id(), username: username, password: body["password"] as! String, name: body["name"] as? String)
       accounts.append(made)
@@ -313,7 +316,7 @@ final class FakeAPI: @unchecked Sendable {
         return .error(400, extra: ["errors": ["This invitation is to join an existing group; do not send group."]])
       }
       guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
-      if accounts.contains(where: { $0.username == username }) { return .error(400, extra: ["errors": ["That username is taken."]]) }
+      if accounts.contains(where: { $0.username == username }) { return Self.usernameTaken }
       guard let password = body["password"] as? String else { return .error(400, extra: ["errors": ["password is required."]]) }
       // Unlike a join, no placeholder address is stored: the account needs a real one.
       guard body["email"] is String else { return .error(400, extra: ["errors": ["Email cannot be null."]]) }

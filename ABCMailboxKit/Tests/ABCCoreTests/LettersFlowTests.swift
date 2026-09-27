@@ -105,7 +105,7 @@ final class LettersFlowTests: XCTestCase {
   func testARelayGroupWithoutKeysCannotBeWrittenToAndSaysSo() async throws {
     try await signIn()
     await assertThrowsAppError(try await letters.send(NewLetter(prisonerId: 3, body: "Dear friend", relayNote: nil, relayChapter: 9))) {
-      guard case .validation(let errors) = $0 else { return XCTFail("expected validation") }
+      guard case .validation(let errors, _) = $0 else { return XCTFail("expected validation") }
       XCTAssertTrue(errors[0].contains("has not set up encryption"))
     }
     XCTAssertEqual(app.requests(to: "/messaging/message").count, 0)

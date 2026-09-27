@@ -200,6 +200,8 @@ struct PenNameCheckDTO: Decodable {
   let available: Bool?
   let name: String?
   let reason: String?
+  /// Beside `reason` since API #133: `not_unique`, `length_out_of_range`, or `validation_failed` for the shape.
+  let reasonCode: String?
   let twoParts: Bool?
 }
 

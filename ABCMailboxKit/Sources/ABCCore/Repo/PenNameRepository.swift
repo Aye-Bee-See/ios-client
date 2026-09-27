@@ -20,7 +20,7 @@ public final class PenNameRepository {
     // A signed-in caller asking about their own old name hears "available", so the token goes with it when there is one.
     let envelope: APIEnvelope<PenNameCheckDTO> = try await api.get("auth/pen-name-available", query: [("name", n)])
     let d = try envelope.required("pen name check")
-    return PenNameCheck(name: d.name?.nonBlank ?? n, available: d.available ?? false, reason: d.reason?.nonBlank, twoParts: d.twoParts ?? true)
+    return PenNameCheck(name: d.name?.nonBlank ?? n, available: d.available ?? false, reason: d.reason?.nonBlank, twoParts: d.twoParts ?? true, reasonCode: d.reasonCode)
   }
 
   public func names() async throws -> PenNames {

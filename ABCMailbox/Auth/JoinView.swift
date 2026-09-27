@@ -20,6 +20,8 @@ final class JoinModel {
   private(set) var info: JoinInfo?
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reasons, each under the field it is about (API #133).
+  private(set) var fields = FormErrors()
   /// True when the code was refused as used, cancelled, expired or its chapter inactive: show the "ask for another" state.
   private(set) var codeDead = false
 
@@ -43,7 +45,7 @@ final class JoinModel {
     return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
   }
 
-  func edited() { error = nil }
+  func edited() { error = nil; fields = FormErrors() }
 
   /// Arrived by the slip's QR: check the code straight away.
   func checkIfArrivedByLink() async {
@@ -99,6 +101,9 @@ final class JoinModel {
     case .gone(_, condition: "inactive"): error = "The group that printed this slip is not active on the network right now. Ask them what to do."
     case .gone: error = "This code can no longer be used. Ask the group for another slip."
     case .network: error = "Can't reach the server. Check your connection and try again."
+    case .validation:
+      fields = FormErrors(e, fields: ["username": "username", "email": "email address", "name": "name", "penName": "pen name"])
+      error = fields.general
     default: error = e.userMessage ?? "Something went wrong. Please try again."
     }
   }
@@ -149,7 +154,7 @@ struct JoinView: View {
         ? "Your password protects your encryption key. No one, not this site and not your group, can read your letters without it. After this step you will get a recovery code: it is the only way back in if you forget the password."
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
-    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
+    LabeledField(label: "Username", hint: model.fields.byField["username"] ?? "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username) || model.fields.byField["username"] != nil) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("join-username")
     }
@@ -157,12 +162,12 @@ struct JoinView: View {
     PasswordStrengthMeter(password: model.password)
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
-    LabeledField(label: "Your name (optional)", hint: "What the group sees beside your letters, if you want a name there.") {
+    LabeledField(label: "Your name (optional)", hint: model.fields.byField["name"] ?? "What the group sees beside your letters, if you want a name there.", isError: model.fields.byField["name"] != nil) {
       TextField("", text: $model.name).textContentType(.name)
     }
-    PenNameField(checker: model.penName, label: "Pen name (optional)")
+    PenNameField(checker: model.penName, label: "Pen name (optional)", serverError: model.fields.byField["penName"])
     Muted("The name your letters are signed with, and the name a prisoner writes back to. You can choose it later, and every name you use stays yours.")
-    LabeledField(label: "Email (optional)") {
+    LabeledField(label: "Email (optional)", hint: model.fields.byField["email"], isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
     CheckboxRow(text: "I understand that a lost password cannot be reset by email.", isOn: $model.understood)

@@ -148,8 +148,17 @@ public final class APIClient: Sendable {
     case 400:
       // The letter is in the wrong shape for the server's mode: not something the writer can fix in the form.
       if envelope?.problems?.contains(where: { $0.code == "wrong_encryption_mode" }) == true { return .wrongEncryptionMode }
-      if let errors = envelope?.errors, !errors.isEmpty { return .validation(errors) }
-      return .validation([info ?? "The request was rejected."])
+      // The sentences are under `errors`, or, for a refusal raised as a general error (a username already in use,
+      // found only when the account is written), one sentence under `error` beside a generic `info`.
+      var sentences = envelope?.errors ?? []
+      if sentences.isEmpty, let one = envelope?.error ?? info { sentences = [one] }
+      guard !sentences.isEmpty else { return .validation(["The request was rejected."]) }
+      // `problems[i]` is `sentences[i]` (a documented rule since #133); without that pairing, the sentences alone.
+      let problems = envelope?.problems ?? []
+      guard problems.count == sentences.count else { return .validation(sentences) }
+      return .validation(sentences, problems: zip(sentences, problems).map { sentence, p in
+        FieldProblem(field: p.field, code: p.code ?? "validation_failed", min: p.params?.min, max: p.params?.max, message: sentence)
+      })
     case 401: return .unauthorized(info)
     case 403: return .forbidden(info ?? "You are not allowed to do that.")
     // Like a 409, a 404 may carry the useful sentence in `error` ("Message 99999 not found") under a general `info`.

@@ -99,7 +99,7 @@ final class InviteCodesTests: XCTestCase {
   func testATakenUsernameDoesNotSpendTheCodeAndTheOtherRefusalsAreWordedByTheirCode() async throws {
     let issued = try await member.container.group.issueInviteCodes(count: 1, label: nil, days: nil)
     let code = InviteCode.normalise(issued.codes[0])
-    await assertThrowsAppError(try await newcomer.container.sessions.join(code: code, username: "member1", password: password, email: nil, name: nil)) { XCTAssertEqual($0, .validation(["That username is taken."])) }
+    await assertThrowsAppError(try await newcomer.container.sessions.join(code: code, username: "member1", password: password, email: nil, name: nil)) { XCTAssertEqual($0, .validation(["Username already in use."], problems: [FieldProblem(field: nil, code: "validation_failed", message: "Username already in use.")])) }
     XCTAssertFalse(newcomer.container.sessions.state.isSignedIn)
     _ = try await newcomer.container.sessions.joinInfo(code: code) // still usable
     try await newcomer.container.sessions.join(code: code, username: "someone", password: password, email: nil, name: nil)
