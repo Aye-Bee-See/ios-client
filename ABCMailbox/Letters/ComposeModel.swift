@@ -305,6 +305,7 @@ final class ComposeModel {
   private func uploadThen(messageId: Int, chatId: Int?) async {
     let letters = app.container.letters
     var failed: [String] = []
+    var limited: String?
     for (i, file) in attachments.enumerated() {
       progress = "Uploading \(file.name) (\(i + 1) of \(attachments.count))…"
       do {
@@ -312,12 +313,16 @@ final class ComposeModel {
         app.container.files.discard(file)
       } catch {
         failed.append(file.name)
+        // Paced (`429`): the server's sentence says when; the letter itself went, and the files can follow later.
+        if case .rateLimited(let info, let seconds) = AppError.from(error) {
+          limited = info ?? seconds.map { "Try again in \(($0 + 59) / 60) minute(s)." }
+        }
       }
     }
     var thread = chatId
     if thread == nil { thread = (try? await letters.letter(messageId: messageId))?.threadId }
     sending = false; progress = nil
-    if !failed.isEmpty { app.show("The letter was sent, but these files did not upload: \(failed.joined(separator: ", ")).") }
+    if !failed.isEmpty { app.show("The letter was sent, but these files did not upload: \(failed.joined(separator: ", ")).\(limited.map { " \($0) Until it is printed, you can add them by editing the letter." } ?? "")") }
     if let thread { app.letterSent(chatId: thread) } else { app.pop() }
   }
 }
