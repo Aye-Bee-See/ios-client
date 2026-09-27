@@ -38,6 +38,15 @@ public struct PenNameCheck: Equatable, Sendable {
   public let available: Bool
   public let reason: String?
   public let twoParts: Bool
+  /// Why not, as a code (API #133); nil from an older API, or when the name is free.
+  public var reasonCode: String? = nil
+
+  /// What to say when the name cannot be had: the app's words where the code says why, else the API's.
+  public var refusal: String? {
+    guard !available else { return nil }
+    if reasonCode == "not_unique" { return "\(name) is taken. A pen name once used stays with the person who used it, so choose another." }
+    return reason ?? "That name cannot be used."
+  }
 }
 
 /// `GET /auth/pen-name`: the account's names, current first, and what the limits (API #127) leave it today.

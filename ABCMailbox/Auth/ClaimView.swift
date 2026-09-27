@@ -17,6 +17,8 @@ final class ClaimModel {
   private(set) var info: ClaimInfo?
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reasons, each under the field it is about (API #133).
+  private(set) var fields = FormErrors()
   /// True when the token was refused as used or expired: show the "ask for a new one" state.
   private(set) var tokenDead = false
 
@@ -35,7 +37,7 @@ final class ClaimModel {
     !busy && info != nil && (3...16).contains(username.trimmingCharacters(in: .whitespaces).count) && PasswordRules.isLongEnough(password) && passwordsMatch && understood
   }
 
-  func edited() { error = nil }
+  func edited() { error = nil; fields = FormErrors() }
 
   /// Arrived by link with a token: check it straight away.
   func checkIfArrivedByLink() async {
@@ -83,6 +85,9 @@ final class ClaimModel {
     case .gone(_, condition: "used"): error = "This token has already been used. If that was you, sign in with the username and password you chose then. If it was not, tell the group that set up your account."
     case .gone: error = "This token can no longer be used. Ask the group that set up your account for a new one; making one takes them a moment."
     case .network: error = "Can't reach the server. Check your connection and try again."
+    case .validation:
+      fields = FormErrors(e, fields: ["username": "username", "email": "email address", "name": "name", "penName": "pen name"])
+      error = fields.general
     default: error = e.userMessage ?? "Something went wrong. Please try again."
     }
   }
@@ -136,7 +141,7 @@ struct ClaimView: View {
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
 
-    LabeledField(label: "Username", hint: "3 to 16 characters") {
+    LabeledField(label: "Username", hint: model.fields.byField["username"] ?? "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username) || model.fields.byField["username"] != nil) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("claim-username")
     }
@@ -146,7 +151,7 @@ struct ClaimView: View {
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
       .accessibilityIdentifier("claim-confirm")
-    LabeledField(label: "Email (optional)") {
+    LabeledField(label: "Email (optional)", hint: model.fields.byField["email"], isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
     CheckboxRow(text: "I understand that a lost password cannot be reset by email.", isOn: $model.understood)

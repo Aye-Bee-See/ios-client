@@ -12,6 +12,8 @@ final class PenNameModel {
   private(set) var loadError: AppError?
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reason under the field (API #133): a name taken since it was checked, or the wrong shape.
+  private(set) var fields = FormErrors()
 
   @ObservationIgnored private let app: AppModel
 
@@ -32,6 +34,8 @@ final class PenNameModel {
     guard let names, canChange, !busy, !checker.isBlank, !checker.blocks, !checker.checking else { return false }
     return !names.isCurrent(checker.value) && !needsOldName
   }
+
+  func edited() { error = nil; fields = FormErrors() }
 
   func load() async {
     do {
@@ -56,7 +60,12 @@ final class PenNameModel {
       let e = AppError.from(error)
       // The limits may have moved since the screen opened (another device): read them again, then say why.
       if let limit = e.penNameLimit { await load(); self.error = refusal(limit) } else {
-        self.error = e == .network ? "Can't reach the server. Your pen name has not changed." : e.userMessage ?? "Could not change the pen name."
+        if case .validation = e {
+          fields = FormErrors(e, fields: ["penName": "pen name"])
+          self.error = fields.byField.isEmpty ? fields.general : nil
+        } else {
+          self.error = e == .network ? "Can't reach the server. Your pen name has not changed." : e.userMessage ?? "Could not change the pen name."
+        }
       }
     }
   }
@@ -103,7 +112,8 @@ struct PenNameView: View {
     }
     limits(names)
     if model.canChange {
-      PenNameField(checker: model.checker, label: names.current == nil ? "Pen name" : "New pen name")
+      PenNameField(checker: model.checker, label: names.current == nil ? "Pen name" : "New pen name", serverError: model.fields.byField["penName"])
+        .onChange(of: model.checker.value) { model.edited() }
       if model.needsOldName { ErrorText("This year you can only go back to a name you used before.") }
       ErrorText(model.error)
       Button(model.busy ? "Saving…" : "Save pen name") { Task { await model.save() } }

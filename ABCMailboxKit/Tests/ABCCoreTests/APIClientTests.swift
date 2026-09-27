@@ -143,7 +143,14 @@ final class APIClientTests: XCTestCase {
     let wrong = await failure(400, #"{"success":false,"errors":["End-to-end mode: send ciphertext and nonce, not messageText or relayNote."],"problems":[{"field":null,"code":"wrong_encryption_mode"}]}"#)
     XCTAssertEqual(wrong, .wrongEncryptionMode)
     let taken = await failure(400, #"{"success":false,"errors":["That username is taken."],"problems":[{"field":"username","code":"not_unique","params":{"fields":["username"]}}]}"#)
-    XCTAssertEqual(taken, .validation(["That username is taken."]), "every other code keeps its sentence")
+    XCTAssertEqual(taken, .validation(["That username is taken."], problems: [FieldProblem(field: "username", code: "not_unique", message: "That username is taken.")]), "every other code keeps its sentence")
+    let long = await failure(400, #"{"success":false,"errors":["penName must be between 3 and 40 characters."],"problems":[{"field":"penName","code":"length_out_of_range","params":{"min":3,"max":40}}]}"#)
+    XCTAssertEqual(long?.fieldProblems, [FieldProblem(field: "penName", code: "length_out_of_range", min: 3, max: 40, message: "penName must be between 3 and 40 characters.")])
+    // The real answer to a username already in use at join (API main, 27 September).
+    let clash = await failure(400, #"{"success":false,"name":"SequelizeUniqueConstraintError","info":"Error joining with the invite code.","status":400,"problems":[{"field":null,"code":"validation_failed"}],"error":"Username already in use."}"#)
+    XCTAssertEqual(clash, .validation(["Username already in use."], problems: [FieldProblem(field: nil, code: "validation_failed", message: "Username already in use.")]), "the sentence under `error`, not the generic `info`")
+    let unpaired = await failure(400, #"{"success":false,"errors":["One.","Two."],"problems":[{"field":"username","code":"required"}]}"#)
+    XCTAssertEqual(unpaired, .validation(["One.", "Two."]), "problems that do not pair one to one with the sentences are not guessed at")
     let older = await failure(400, #"{"success":false,"errors":["That username is taken."]}"#)
     XCTAssertEqual(older, .validation(["That username is taken."]), "an API from before #133 sends no problems")
   }

@@ -20,6 +20,8 @@ final class InvitationModel {
   private(set) var info: InvitationInfo?
   private(set) var busy = false
   private(set) var error: String?
+  /// A refusal's reasons, each under the field it is about (API #133). A group's fields come back as `group.…`.
+  private(set) var fields = FormErrors()
   /// True when the invitation was refused as used, expired, withdrawn or its group inactive: show the "ask again" state.
   private(set) var tokenDead = false
 
@@ -45,7 +47,7 @@ final class InvitationModel {
     return NewAccountForm.missing(username: username, password: password, confirm: confirm, email: email, understood: understood)
   }
 
-  func edited() { error = nil }
+  func edited() { error = nil; fields = FormErrors() }
 
   /// Sent here from the invite code box, with a token that already has the right shape: check it straight away.
   func checkIfArrived() async {
@@ -104,6 +106,13 @@ final class InvitationModel {
     case .gone(_, condition: "inactive"): error = "The group behind this invitation is not active on the network right now, so its invitation cannot be used. Ask them what to do."
     case .gone: error = "This invitation can no longer be used. Ask whoever invited you for a new one."
     case .network: error = "Can't reach the server. Check your connection and try again."
+    case .validation:
+      fields = FormErrors(e, fields: [
+        "username": "username", "email": "email address", "name": "name",
+        "group.name": "group name", "group.location": "city", "group.country": "country", "group.about": "description",
+        "group.website": "website", "group.email": "group email address",
+      ])
+      error = fields.general
     default: error = e.userMessage ?? "Something went wrong. Please try again."
     }
   }
@@ -166,7 +175,7 @@ struct InvitationView: View {
         : "There is no \"email me a reset link\". Keep your password somewhere safe; if you lose it, a superadmin has to help you."
     )
     SectionTitle("Your account")
-    LabeledField(label: "Username", hint: "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username)) {
+    LabeledField(label: "Username", hint: model.fields.byField["username"] ?? "3 to 16 characters", isError: NewAccountForm.usernameTooLong(model.username) || model.fields.byField["username"] != nil) {
       TextField("", text: $model.username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityIdentifier("invitation-username")
     }
@@ -174,10 +183,10 @@ struct InvitationView: View {
     PasswordStrengthMeter(password: model.password)
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
-    LabeledField(label: "Your name (optional)", hint: "What the other admins of your group see.") {
+    LabeledField(label: "Your name (optional)", hint: model.fields.byField["name"] ?? "What the other admins of your group see.", isError: model.fields.byField["name"] != nil) {
       TextField("", text: $model.name).textContentType(.name)
     }
-    LabeledField(label: "Email", hint: "Required for a group admin. Other admins and the network's admins can reach you there.") {
+    LabeledField(label: "Email", hint: model.fields.byField["email"] ?? "Required for a group admin. Other admins and the network's admins can reach you there.", isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }
     CheckboxRow(text: "I understand that a lost password cannot be reset by email.", isOn: $model.understood)
@@ -193,25 +202,26 @@ struct InvitationView: View {
   @ViewBuilder private func groupFields(_ info: InvitationInfo) -> some View {
     SectionTitle("Your group")
     if info.groupFields.contains("name") {
-      LabeledField(label: "Group name") { TextField("", text: $model.group.name).textContentType(.organizationName) }
+      LabeledField(label: "Group name", hint: model.fields.byField["group.name"], isError: model.fields.byField["group.name"] != nil) { TextField("", text: $model.group.name).textContentType(.organizationName) }
     }
     if info.groupFields.contains("location") {
-      LabeledField(label: "City", hint: "Where the group is. Writers find groups near a facility by this.") { TextField("", text: $model.group.city).textContentType(.addressCity) }
+      LabeledField(label: "City", hint: model.fields.byField["group.location"] ?? "Where the group is. Writers find groups near a facility by this.", isError: model.fields.byField["group.location"] != nil) { TextField("", text: $model.group.city).textContentType(.addressCity) }
     }
     if info.groupFields.contains("country") {
-      LabeledField(label: "Country (optional)") { TextField("", text: $model.group.country).textContentType(.countryName) }
+      LabeledField(label: "Country (optional)", hint: model.fields.byField["group.country"], isError: model.fields.byField["group.country"] != nil) { TextField("", text: $model.group.country).textContentType(.countryName) }
     }
     if info.groupFields.contains("about") {
       FieldLabel("About the group (optional)")
       TextBox(text: $model.group.about, placeholder: "What the group does, for the directory.", minHeight: 100)
+      ErrorText(model.fields.byField["group.about"])
     }
     if info.groupFields.contains("website") {
-      LabeledField(label: "Website (optional)") {
+      LabeledField(label: "Website (optional)", hint: model.fields.byField["group.website"], isError: model.fields.byField["group.website"] != nil) {
         TextField("", text: $model.group.website).textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
       }
     }
     if info.groupFields.contains("email") {
-      LabeledField(label: "Group email (optional)", hint: "Public, in the directory.") {
+      LabeledField(label: "Group email (optional)", hint: model.fields.byField["group.email"] ?? "Public, in the directory.", isError: model.fields.byField["group.email"] != nil) {
         TextField("", text: $model.group.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
       }
     }

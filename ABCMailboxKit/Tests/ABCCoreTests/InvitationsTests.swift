@@ -78,7 +78,7 @@ final class InvitationsTests: XCTestCase {
     fake.accounts = [FakeAPI.Account(id: 3, username: "taken", password: "x")]
     let info = try await sessions.invitationInfo(token: memberToken)
     await assertThrowsAppError(try await sessions.acceptInvitation(token: memberToken, info: info, username: "taken", password: password, email: "t@example.com", name: nil, penName: nil, group: nil)) {
-      XCTAssertEqual($0, .validation(["That username is taken."]))
+      XCTAssertEqual($0, .validation(["Username already in use."], problems: [FieldProblem(field: nil, code: "validation_failed", message: "Username already in use.")]))
     }
     XCTAssertNil(sessions.state.user)
     try await sessions.acceptInvitation(token: memberToken, info: info, username: "riverside", password: password, email: "r@example.com", name: nil, penName: nil, group: nil)

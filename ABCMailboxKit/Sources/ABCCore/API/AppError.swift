@@ -5,8 +5,9 @@ import Foundation
 /// every other failure carries `info` (one sentence), and a 403's `info` says
 /// exactly why, so it is shown verbatim.
 public enum AppError: Error, Equatable, Sendable {
-  /// The server rejected the input; each entry is a complete sentence.
-  case validation([String])
+  /// The server rejected the input; each entry is a complete sentence. `problems` (API #133) says, for each sentence
+  /// it can, which request field it is about and why, so a form can put it under the right box.
+  case validation([String], problems: [FieldProblem] = [])
   /// No token, a bad token, or (on login) wrong credentials.
   case unauthorized(String?)
   /// The caller is known but not allowed; the sentence explains what to do.
@@ -39,7 +40,7 @@ public enum AppError: Error, Equatable, Sendable {
   /// The sentence to show a person, when one exists.
   public var userMessage: String? {
     switch self {
-    case .validation(let errors): return errors.joined(separator: " ")
+    case .validation(let errors, _): return errors.joined(separator: " ")
     case .unauthorized(let info), .notFound(let info), .gone(let info, _): return info
     case .conflict(let info, _, _): return info
     case .forbidden(let info): return info
@@ -62,6 +63,9 @@ public enum AppError: Error, Equatable, Sendable {
     default: return userMessage ?? "Something went wrong. Please try again."
     }
   }
+
+  /// The field-by-field reasons of a `400`, empty for anything else or an API from before #133.
+  public var fieldProblems: [FieldProblem] { if case .validation(_, let problems) = self { return problems } else { return [] } }
 
   public var isForbidden: Bool { if case .forbidden = self { return true } else { return false } }
   public var conflictCondition: String? { if case .conflict(_, _, let condition) = self { return condition } else { return nil } }

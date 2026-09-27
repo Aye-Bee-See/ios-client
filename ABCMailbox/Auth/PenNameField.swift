@@ -29,7 +29,7 @@ final class PenNameChecker {
     if isBlank { return nil }
     if let problem { return problem }
     if let check {
-      if !check.available { return check.reason ?? "That name is taken." }
+      if let refusal = check.refusal { return refusal }
       return check.twoParts ? "\(check.name) is free." : "\(check.name) is free. A first and a last part, like a real name, reads better in a mail room."
     }
     return checkFailed ? "Could not check the name just now; it will be checked when you continue." : nil
@@ -62,9 +62,11 @@ final class PenNameChecker {
 struct PenNameField: View {
   @Bindable var checker: PenNameChecker
   var label = "Pen name"
+  /// The server's refusal of this name on submit (API #133), which outranks the check made while typing.
+  var serverError: String? = nil
 
   var body: some View {
-    LabeledField(label: label, hint: checker.checking ? "Checking…" : checker.message ?? PenName.rules, isError: checker.isError) {
+    LabeledField(label: label, hint: serverError ?? (checker.checking ? "Checking…" : checker.message ?? PenName.rules), isError: serverError != nil || checker.isError) {
       TextField("", text: $checker.value)
         .textInputAutocapitalization(.words).autocorrectionDisabled()
         .accessibilityIdentifier("pen-name")

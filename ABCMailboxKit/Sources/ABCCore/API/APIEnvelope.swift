@@ -24,6 +24,12 @@ struct APIEnvelope<T: Decodable>: Decodable {
     /// The path in the request body (`group.name`), or nil when the refusal is about the request as a whole.
     let field: String?
     let code: String?
+    let params: Params?
+
+    struct Params: Decodable {
+      let min: Int?
+      let max: Int?
+    }
   }
 
   private enum CodingKeys: String, CodingKey { case data, info, name, errors, error, condition, total, page, unread, problems, pageSize = "page_size" }
