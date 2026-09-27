@@ -72,7 +72,13 @@ public enum AppError: Error, Equatable, Sendable {
   /// A status move lost a race: another volunteer, or a double tap, got there first, or the letter was held or
   /// handed to another group in that moment. The letter is very probably already where the person wanted it,
   /// so this is "look again", not a failure to show in red.
-  public var isChangedMeanwhile: Bool { if case .conflict(let text?, name: "LetterStatusError", _) = self { return text.contains("meanwhile") } else { return false } }
+  /// Read from `condition: "changed_meanwhile"` (API #133). The word in the sentence is the fallback for an API from
+  /// before it, which sent no condition; a condition that says anything else is taken at its word.
+  public var isChangedMeanwhile: Bool {
+    guard case .conflict(let text, name: "LetterStatusError", let condition) = self else { return false }
+    if let condition { return condition == "changed_meanwhile" }
+    return text?.contains("meanwhile") == true
+  }
   /// The letter is held (its prisoner was moved or freed) and the request did not say `release` (API PR #106).
   public var isLetterHeld: Bool { if case .conflict(_, name: "LetterHeldError", _) = self { return true } else { return false } }
   /// A pen name change the limits do not allow (API #127): `cooldown` (once every 90 days) or `new_names` (two
