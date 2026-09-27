@@ -24,7 +24,7 @@ final class RecoverModel {
   func submit() async {
     guard canSubmit else { return }
     // Check the code's shape locally: recovery starts are rate limited per username.
-    guard SecretCodes.isWellFormed(code) else { error = "A recovery code has 24 letters and digits, and never I, L, O, or U."; return }
+    guard SecretCodes.isWellFormed(code) else { error = "That is not a recovery code. It has 24 letters and digits, as the app showed it to you; dashes, spaces, and lower case are fine, and so is an O typed for a zero."; return }
     busy = true; error = nil
     defer { busy = false }
     do {
