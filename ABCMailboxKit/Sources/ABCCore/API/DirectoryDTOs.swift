@@ -18,7 +18,7 @@ struct PrisonerDTO: Decodable {
   let estimatedRelease: String?
   let bio: String?
   let interests: [String]?
-  let photoUrl: String?
+  let photo: PhotoDTO?
   let supportWebsite: String?
   let donationInfo: String?
   let status: String?
@@ -31,9 +31,17 @@ struct PrisonerDTO: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case id, birthName, chosenName, aliases, prison, country, inmateID, releaseDate, detainedSince, sentence, charges
-    case estimatedRelease, bio, interests, photoUrl, supportWebsite, donationInfo, status, statusNotice, featured, verifiedBy, verifiedAt
+    case estimatedRelease, bio, interests, photo, supportWebsite, donationInfo, status, statusNotice, featured, verifiedBy, verifiedAt
     case prisonDetails = "prison_details", supportGroups = "support_groups"
   }
+}
+
+/// `photo` on a prisoner row (API #130). Only a hosted one is used: `hosted: false` is a link to another site.
+struct PhotoDTO: Decodable {
+  let url: String?
+  let hosted: Bool?
+  let credit: String?
+  let updatedAt: String?
 }
 
 struct PrisonDTO: Decodable {

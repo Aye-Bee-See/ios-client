@@ -66,6 +66,28 @@ public struct Facility: Equatable, Identifiable, Sendable {
   public var shortLocation: String { [addressLines.last, country].compactMap { $0 }.joined(separator: ", ") }
 }
 
+/// A prisoner's photograph, hosted by the API (API #130): it needs no token and tells no other site who is
+/// looking. Only hosted pictures are shown; a link to somebody else's site never is.
+public struct PrisonerPhoto: Equatable, Sendable {
+  /// As the API gives it, relative to the API base.
+  public let url: String
+  /// Where the picture came from, or whose permission it is there by. Shown beside it.
+  public let credit: String?
+  public let updatedAt: Date?
+
+  public init(url: String, credit: String? = nil, updatedAt: Date? = nil) {
+    self.url = url; self.credit = credit; self.updatedAt = updatedAt
+  }
+
+  /// The address to load, on the API in force. Nil for anything that would leave it.
+  public func address(apiBase: URL) -> URL? {
+    guard let resolved = URL(string: url, relativeTo: apiBase)?.absoluteURL,
+          resolved.scheme?.lowercased() == apiBase.scheme?.lowercased(), resolved.host == apiBase.host, resolved.port == apiBase.port
+    else { return nil }
+    return resolved
+  }
+}
+
 public struct Prisoner: Equatable, Identifiable, Sendable {
   public let id: Int
   public let name: String
@@ -83,7 +105,7 @@ public struct Prisoner: Equatable, Identifiable, Sendable {
   public let estimatedRelease: String?
   public let bio: String?
   public let interests: [String]
-  public let photoUrl: String?
+  public let photo: PrisonerPhoto?
   public let supportWebsite: String?
   public let donationInfo: String?
   public let status: String?
@@ -97,13 +119,13 @@ public struct Prisoner: Equatable, Identifiable, Sendable {
   init(
     id: Int, name: String, birthName: String? = nil, aliases: [String] = [], facilityId: Int? = nil, facility: Facility? = nil, country: String? = nil,
     detainedSince: Date? = nil, releaseDate: Date? = nil, sentence: String? = nil, charges: String? = nil, estimatedRelease: String? = nil, bio: String? = nil,
-    interests: [String] = [], photoUrl: String? = nil, supportWebsite: String? = nil, donationInfo: String? = nil, status: String? = nil, statusNotice: String? = nil,
+    interests: [String] = [], photo: PrisonerPhoto? = nil, supportWebsite: String? = nil, donationInfo: String? = nil, status: String? = nil, statusNotice: String? = nil,
     featured: Bool = false, verification: Verification = Verification(byGroupId: nil, at: nil), supportGroups: [SupportGroup] = [], inmateId: String? = nil
   ) {
     self.id = id; self.name = name; self.birthName = birthName; self.aliases = aliases; self.facilityId = facilityId
     self.facilityBox = facility.map(Box.init); self.country = country; self.detainedSince = detainedSince; self.releaseDate = releaseDate
     self.sentence = sentence; self.charges = charges; self.estimatedRelease = estimatedRelease; self.bio = bio; self.interests = interests
-    self.photoUrl = photoUrl; self.supportWebsite = supportWebsite; self.donationInfo = donationInfo; self.status = status
+    self.photo = photo; self.supportWebsite = supportWebsite; self.donationInfo = donationInfo; self.status = status
     self.statusNotice = statusNotice; self.featured = featured; self.verification = verification; self.supportGroups = supportGroups; self.inmateId = inmateId
   }
 

@@ -137,4 +137,23 @@ final class LettersMapperTests: XCTestCase {
     XCTAssertEqual(label(20_480), "20 KB")
     XCTAssertEqual(label(5_767_168), "5.5 MB")
   }
+
+  func testOnlyAHostedPhotoIsShownAndItStaysOnTheAPIInForce() throws {
+    func prisoner(_ json: String) throws -> Prisoner { try JSONDecoder().decode(PrisonerDTO.self, from: Data(json.utf8)).toDomain() }
+    let base = try XCTUnwrap(URL(string: "https://abctest.letters.support/"))
+
+    let hosted = try XCTUnwrap(try prisoner(#"{"id":41,"photoUrl":"https://support.example/jane.jpg","photo":{"url":"/prisoner/photo?prisoner=41","hosted":true,"credit":"ABC Belarus","updatedAt":"2026-09-26T10:04:00.000Z"}}"#).photo)
+    XCTAssertEqual(hosted.credit, "ABC Belarus"); XCTAssertNotNil(hosted.updatedAt)
+    XCTAssertEqual(hosted.address(apiBase: base)?.absoluteString, "https://abctest.letters.support/prisoner/photo?prisoner=41")
+
+    // Another site's picture is never shown, whether it comes as `photo` or as the old `photoUrl`.
+    XCTAssertNil(try prisoner(#"{"id":42,"photo":{"url":"https://support.example/alex.jpg","hosted":false}}"#).photo)
+    XCTAssertNil(try prisoner(#"{"id":43,"photoUrl":"https://support.example/alex.jpg"}"#).photo)
+    XCTAssertNil(try prisoner(#"{"id":44,"photo":null}"#).photo, "no picture: nothing shown")
+
+    // Even a "hosted" address is loaded only from the API in force.
+    XCTAssertNil(PrisonerPhoto(url: "https://elsewhere.example/p.jpg").address(apiBase: base))
+    XCTAssertNil(PrisonerPhoto(url: "http://abctest.letters.support/prisoner/photo?prisoner=41").address(apiBase: base), "not downgraded to http")
+    XCTAssertNil(PrisonerPhoto(url: "javascript:alert(1)").address(apiBase: base))
+  }
 }

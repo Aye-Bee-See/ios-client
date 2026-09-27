@@ -27,10 +27,8 @@ struct PrisonerView: View {
     let facility = facilityDetail ?? p.facility
     return Screen(spacing: 10) {
       if let notice = p.statusNotice { AlertBanner("⚠ \(notice)") }
-      if let photo = p.photoUrl.flatMap(URL.init(string:)) {
-        AsyncImage(url: photo) { image in image.resizable().scaledToFill() } placeholder: { Theme.paperRaised }
-          .frame(maxWidth: .infinity).frame(height: 240).clipShape(RoundedRectangle(cornerRadius: 4))
-          .accessibilityLabel("Photo of \(p.name)")
+      if let photo = p.photo {
+        PrisonerPhotoView(photo: photo, name: p.name, apiBase: URL(string: app.container.devServer.baseURL))
       }
       Text(p.name).font(Theme.headline)
       let alsoKnown = [p.birthName].compactMap { $0 } + p.aliases
