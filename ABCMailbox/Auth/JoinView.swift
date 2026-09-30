@@ -41,8 +41,7 @@ final class JoinModel {
 
   /// The first thing the form still needs, as a sentence for under the disabled button.
   var missing: String? {
-    if penName.blocks { return "Choose another pen name, or leave it empty for now." }
-    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
+    NewAccountForm.missing(username: username, password: password, confirm: confirm, penName: penName, understood: understood)
   }
 
   func edited() { error = nil; fields = FormErrors() }
@@ -165,8 +164,8 @@ struct JoinView: View {
     LabeledField(label: "Your name (optional)", hint: model.fields.byField["name"] ?? "What the group sees beside your letters, if you want a name there.", isError: model.fields.byField["name"] != nil) {
       TextField("", text: $model.name).textContentType(.name)
     }
-    PenNameField(checker: model.penName, label: "Pen name (optional)", serverError: model.fields.byField["penName"])
-    Muted("The name your letters are signed with, and the name a prisoner writes back to. You can choose it later, and every name you use stays yours.")
+    PenNameField(checker: model.penName, label: "Pen name", serverError: model.fields.byField["penName"])
+    Muted("The name your letters are signed with, and the name a prisoner writes back to. Two parts, like a real name, read best in a mail room. Every name you use stays yours.")
     LabeledField(label: "Email (optional)", hint: model.fields.byField["email"], isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }

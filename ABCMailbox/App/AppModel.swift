@@ -181,6 +181,14 @@ final class AppModel {
     Task { await container.activity.markAllRead() }
   }
 
+  // MARK: A pen name for accounts made before it was required (API #168)
+
+  /// A writer with no pen name is asked for one before anything else; see `PenNameRequiredView`.
+  private(set) var needsPenName = false
+
+  func checkPenName() async { needsPenName = await container.penNames.isMissing() }
+  func penNameChosen() { needsPenName = false }
+
   // MARK: Key set-up (API PR #95)
 
   /// A group member's share of the move to end-to-end encryption, after every sign-in and launch,

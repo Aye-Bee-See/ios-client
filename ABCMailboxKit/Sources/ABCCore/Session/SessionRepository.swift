@@ -227,7 +227,7 @@ public final class SessionRepository {
     let envelope: APIEnvelope<ClaimInfoDTO> = try await api.get("auth/claim", query: [("token", token)])
     let d = try envelope.required("claim response")
     lastClaim = (token, d)
-    return ClaimInfo(writerName: d.writer.name ?? "your account", groupName: d.chapter?.name, expiresAt: d.expiresAt.flatMap(parseInstant), endToEnd: d.material != nil)
+    return ClaimInfo(writerName: d.writer.name ?? "your account", groupName: d.chapter?.name, expiresAt: d.expiresAt.flatMap(parseInstant), endToEnd: d.material != nil, writerPenName: d.writer.penName?.nonBlank)
   }
 
   /// Claims the account, then signs in with the new credentials. Every new account is split where the

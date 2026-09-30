@@ -72,6 +72,10 @@ final class FakeAPI: @unchecked Sendable {
   /// As the API answers a taken username at join, claim and acceptance since #142 (checked against API main): the
   /// sentence under `errors`, and beside it the field and `not_unique`.
   static let usernameTaken = Stubbed.error(400, extra: ["errors": ["Username already in use."], "problems": [["field": "username", "code": "not_unique", "params": ["fields": ["username"]]]]])
+  /// API #168: making an account without a pen name, as the API refuses it once `requirePenName` is on.
+  var requirePenName = false
+  static let penNameRequired = Stubbed.error(400, extra: ["errors": ["Choose a pen name: the name your letters are signed with, and the name a reply comes back to."], "problems": [["field": "penName", "code": "required"]]])
+  private func lacksPenName(_ body: [String: Any]) -> Bool { requirePenName && ((body["penName"] as? String)?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) }
   static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
   /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
   var penNameLimits: [String: Any] = ["changeAllowedAt": NSNull(), "newNamesLeft": 2, "newNamesWindowEnds": NSNull(), "cooldownDays": 90, "newPerYear": 2]
@@ -281,6 +285,7 @@ final class FakeAPI: @unchecked Sendable {
       }
       let chapter: [String: Any] = ["id": c.chapter, "name": "Test Chapter"]
       if r.method == "GET" { return .data(["chapter": chapter, "expiresAt": inviteBatches[c.batch].map { $0.expiresAt as Any } ?? NSNull()]) }
+      if lacksPenName(body) { return Self.penNameRequired }
       guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
       if accounts.contains(where: { $0.username == username }) { return Self.usernameTaken }
       guard body["password"] is String else { return .error(400, extra: ["errors": ["password is required."]]) }
@@ -315,6 +320,7 @@ final class FakeAPI: @unchecked Sendable {
       } else if body["group"] != nil {
         return .error(400, extra: ["errors": ["This invitation is to join an existing group; do not send group."]])
       }
+      if lacksPenName(body) { return Self.penNameRequired }
       guard let username = body["username"] as? String, (3...16).contains(username.count) else { return .error(400, extra: ["errors": ["username must be 3 to 16 characters."]]) }
       if accounts.contains(where: { $0.username == username }) { return Self.usernameTaken }
       guard let password = body["password"] as? String else { return .error(400, extra: ["errors": ["password is required."]]) }
@@ -447,7 +453,7 @@ final class FakeAPI: @unchecked Sendable {
     case ("GET", "/auth/claim"):
       let hash = SecretCodes.hashHex(r.query["token"] ?? "")
       guard let a = accounts.first(where: { $0.claim?["tokenHash"] as? String == hash }) else { return .error(404, info: "Unknown token.") }
-      var data: [String: Any] = ["writer": ["id": a.id, "name": a.name ?? a.username], "chapter": ["id": a.managedBy ?? 0, "name": "Test Chapter"], "expiresAt": "2026-09-22T10:00:00.000Z"]
+      var data: [String: Any] = ["writer": ["id": a.id, "name": a.name ?? a.username, "penName": a.penName ?? NSNull()], "chapter": ["id": a.managedBy ?? 0, "name": "Test Chapter"], "expiresAt": "2026-09-22T10:00:00.000Z"]
       for k in ["claimWrappedPrivateKey", "claimSalt", "claimKdfParams"] { data[k] = a.claim?[k] ?? NSNull() }
       data["publicKey"] = a.keys["publicKey"] ?? NSNull()
       return .data(data)
@@ -455,6 +461,9 @@ final class FakeAPI: @unchecked Sendable {
     case ("POST", "/auth/claim"):
       let hash = SecretCodes.hashHex(body["token"] as? String ?? "")
       guard let i = accounts.firstIndex(where: { $0.claim?["tokenHash"] as? String == hash }) else { return .error(410, info: "Used or expired.") }
+      // A writer the group already named keeps that name and need not send one (API #168).
+      if accounts[i].penName == nil, lacksPenName(body) { return Self.penNameRequired }
+      if let pen = body["penName"] as? String { accounts[i].penName = pen }
       if let refused = scheme(body, for: i, creating: true) { return refused }
       accounts[i].username = body["username"] as! String
       accounts[i].password = body["password"] as! String

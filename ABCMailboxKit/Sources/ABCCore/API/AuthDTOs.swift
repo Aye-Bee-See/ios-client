@@ -82,7 +82,9 @@ struct NamedRef: Decodable {
 }
 
 struct ClaimInfoDTO: Decodable {
-  let writer: NamedRef
+  /// Since API #168 the writer also carries `penName`: the name the group gave them, or null when it gave none.
+  struct Writer: Decodable { let id: Int; let name: String?; let penName: String? }
+  let writer: Writer
   let chapter: NamedRef?
   let expiresAt: String?
   // End-to-end mode: the writer's keypair, private half wrapped under the claim token.

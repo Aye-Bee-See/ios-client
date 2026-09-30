@@ -2,6 +2,7 @@ import ABCCore
 
 /// The rules a new account's form checks before its button works (joining, accepting an invitation). A disabled
 /// button says nothing on its own, so the first thing still missing is shown under it as a sentence.
+@MainActor
 enum NewAccountForm {
   static let usernameLength = 3...16
 
@@ -9,7 +10,8 @@ enum NewAccountForm {
 
   /// `email` is checked only when given: accepting an invitation needs a real address, while a join lets the
   /// server store a placeholder.
-  static func missing(username: String, password: String, confirm: String, email: String? = nil, understood: Bool) -> String? {
+  /// `penName` is required on every form that makes an account (API #168); nil only where none is shown.
+  static func missing(username: String, password: String, confirm: String, penName: PenNameChecker? = nil, email: String? = nil, understood: Bool) -> String? {
     let name = username.trimmingCharacters(in: .whitespaces)
     if name.isEmpty { return "Choose a username." }
     if name.count < usernameLength.lowerBound { return "A username has at least \(usernameLength.lowerBound) characters." }
@@ -17,6 +19,10 @@ enum NewAccountForm {
     if !PasswordRules.isLongEnough(password) { return "Your password needs at least \(PasswordRules.minLength) characters." }
     if confirm.isEmpty { return "Type your password again to confirm it." }
     if password != confirm { return "The two passwords do not match." }
+    if let penName {
+      if penName.isBlank { return "Choose a pen name." }
+      if penName.blocks { return "Choose another pen name." }
+    }
     if let email {
       let address = email.trimmingCharacters(in: .whitespaces)
       if address.isEmpty { return "Enter your email address." }

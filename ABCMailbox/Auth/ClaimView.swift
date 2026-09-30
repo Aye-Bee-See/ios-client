@@ -35,12 +35,17 @@ final class ClaimModel {
 
   var passwordsMatch: Bool { password == confirm }
   var canCheck: Bool { !busy && !token.trimmingCharacters(in: .whitespaces).isEmpty }
+  /// The group's name for the writer, kept as it is, is not sent: the server keeps it and it costs no change.
+  var penNameToSend: String? {
+    guard let given = info?.writerPenName, PenName.normalise(penName.value).lowercased() == given.lowercased() else { return penName.value }
+    return nil
+  }
+
   var canClaim: Bool { !busy && info != nil && missing == nil }
 
   /// The first thing the form still needs, as a sentence for under the disabled button.
   var missing: String? {
-    if penName.blocks { return "Choose another pen name, or leave it empty for now." }
-    return NewAccountForm.missing(username: username, password: password, confirm: confirm, understood: understood)
+    NewAccountForm.missing(username: username, password: password, confirm: confirm, penName: penName, understood: understood)
   }
 
   func edited() { error = nil; fields = FormErrors() }
@@ -65,6 +70,8 @@ final class ClaimModel {
       let found = try await app.sessions.claimInfo(token: ClaimToken.normalise(typed))
       token = ClaimToken.pretty(typed)
       info = found
+      // The group may already have named the writer (API #168): offer that name, which they can keep or change.
+      if penName.isBlank, let given = found.writerPenName { penName.value = given }
     } catch {
       fail(.from(error))
     }
@@ -75,7 +82,7 @@ final class ClaimModel {
     busy = true; error = nil
     defer { busy = false }
     do {
-      try await app.sessions.claim(token: ClaimToken.normalise(token), username: username, password: password, email: email, penName: penName.value)
+      try await app.sessions.claim(token: ClaimToken.normalise(token), username: username, password: password, email: email, penName: penNameToSend)
       password = ""; confirm = ""
       app.authFinished(toast: "Account claimed. You are signed in.", goToInbox: true)
     } catch {
@@ -158,8 +165,10 @@ struct ClaimView: View {
     let mismatch = !model.confirm.isEmpty && !model.passwordsMatch
     PasswordField(label: "Confirm password", text: $model.confirm, show: $model.showPassword, hint: mismatch ? "Passwords do not match." : nil, isError: mismatch, isNew: true, showsToggle: false)
       .accessibilityIdentifier("claim-confirm")
-    PenNameField(checker: model.penName, label: "Pen name (optional)", serverError: model.fields.byField["penName"])
-    Muted("The name your letters are signed with, and the name a prisoner writes back to. Choosing it now is free; later, a change waits 90 days.")
+    PenNameField(checker: model.penName, label: "Pen name", serverError: model.fields.byField["penName"])
+    Muted(model.info?.writerPenName != nil
+      ? "The name your group gave you, which your letters are signed with and a prisoner writes back to. Keep it or choose another; choosing now is free, and later a change waits 90 days."
+      : "The name your letters are signed with, and the name a prisoner writes back to. Choosing it now is free; later, a change waits 90 days.")
     LabeledField(label: "Email (optional)", hint: model.fields.byField["email"], isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }

@@ -15,6 +15,7 @@ final class InvitationModel {
   var email = ""
   var name = ""
   var group = NewGroupProfile()
+  let penName: PenNameChecker
   var showPassword = false
   var understood = false
   private(set) var info: InvitationInfo?
@@ -32,6 +33,7 @@ final class InvitationModel {
     self.app = app
     self.arrivedWith = token
     self.token = token.map(InvitationToken.pretty) ?? ""
+    self.penName = PenNameChecker(penNames: app.container.penNames)
   }
 
   var passwordsMatch: Bool { password == confirm }
@@ -44,7 +46,7 @@ final class InvitationModel {
       if info.groupFields.contains("name"), group.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give your group a name." }
       if info.groupFields.contains("location"), group.city.trimmingCharacters(in: .whitespaces).isEmpty { return "Say which city your group is in." }
     }
-    return NewAccountForm.missing(username: username, password: password, confirm: confirm, email: email, understood: understood)
+    return NewAccountForm.missing(username: username, password: password, confirm: confirm, penName: penName, email: email, understood: understood)
   }
 
   func edited() { error = nil; fields = FormErrors() }
@@ -57,6 +59,7 @@ final class InvitationModel {
   func startOver() {
     token = ""
     username = ""; password = ""; confirm = ""; email = ""; name = ""; group = NewGroupProfile(); understood = false
+    penName.clear()
     info = nil; error = nil; tokenDead = false
   }
 
@@ -82,7 +85,7 @@ final class InvitationModel {
     do {
       let accepted = try await app.sessions.acceptInvitation(
         token: InviteCode.normalise(token), info: info, username: username, password: password,
-        email: email, name: name, penName: nil, group: info.kind == .group ? group : nil
+        email: email, name: name, penName: penName.value, group: info.kind == .group ? group : nil
       )
       password = ""; confirm = ""
       app.authFinished(
@@ -108,7 +111,7 @@ final class InvitationModel {
     case .network: error = "Can't reach the server. Check your connection and try again."
     case .validation:
       fields = FormErrors(e, fields: [
-        "username": "username", "email": "email address", "name": "name",
+        "username": "username", "email": "email address", "name": "name", "penName": "pen name",
         "group.name": "group name", "group.location": "city", "group.country": "country", "group.about": "description",
         "group.website": "website", "group.email": "group email address",
       ])
@@ -186,6 +189,8 @@ struct InvitationView: View {
     LabeledField(label: "Your name (optional)", hint: model.fields.byField["name"] ?? "What the other admins of your group see.", isError: model.fields.byField["name"] != nil) {
       TextField("", text: $model.name).textContentType(.name)
     }
+    PenNameField(checker: model.penName, label: "Pen name", serverError: model.fields.byField["penName"])
+    Muted("The name your letters are signed with, when you write for your group or as yourself. Two parts, like a real name, read best in a mail room.")
     LabeledField(label: "Email", hint: model.fields.byField["email"] ?? "Required for a group admin. Other admins and the network's admins can reach you there.", isError: model.fields.byField["email"] != nil) {
       TextField("", text: $model.email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
     }

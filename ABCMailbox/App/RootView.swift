@@ -16,6 +16,12 @@ struct RootView: View {
         tab(.account, "Account", "person", path: $app.accountPath) { AccountView(app: app) }
       }
       toastOverlay
+      // A writer from before pen names were required: asked for one, under the recovery code if both are due.
+      if app.needsPenName, app.user != nil {
+        PenNameRequiredView(app: app)
+          .transition(.opacity)
+          .zIndex(1)
+      }
       // A recovery code was just created (first sign-in on an end-to-end server, or a claim):
       // it takes over the screen until the writer confirms they saved it.
       if let code = app.sessions.pendingRecoveryCode {
@@ -25,6 +31,7 @@ struct RootView: View {
       }
     }
     .animation(.default, value: app.sessions.pendingRecoveryCode)
+    .animation(.default, value: app.needsPenName)
     .fullScreenCover(isPresented: $app.authPresented) { AuthFlowView() .environment(app).tint(Theme.red) }
     .task { await app.container.modes.refresh() } // Ask the server which letter contract it speaks, once per launch.
     // Keep the offline copy of the directory fresh: at most one quiet download a day, and only if the server answers.
@@ -40,8 +47,10 @@ struct RootView: View {
       Task { await app.flushOutbox() }
       Task { await app.setUpKeys() }
       Task { await app.syncActivity() }
+      Task { await app.checkPenName() }
     }
     .task { await app.setUpKeys() } // at launch, for someone already signed in
+    .task { await app.checkPenName() }
   }
 
   private func tab<Content: View>(_ tab: AppTab, _ title: String, _ symbol: String, path: Binding<[Route]>, @ViewBuilder root: @escaping () -> Content) -> some View {
