@@ -227,16 +227,16 @@ public final class SessionRepository {
     let envelope: APIEnvelope<ClaimInfoDTO> = try await api.get("auth/claim", query: [("token", token)])
     let d = try envelope.required("claim response")
     lastClaim = (token, d)
-    return ClaimInfo(writerName: d.writer.name ?? "your account", groupName: d.chapter?.name, expiresAt: d.expiresAt.flatMap(parseInstant), endToEnd: d.material != nil)
+    return ClaimInfo(writerName: d.writer.name ?? "your account", groupName: d.chapter?.name, expiresAt: d.expiresAt.flatMap(parseInstant), endToEnd: d.material != nil, writerPenName: d.writer.penName?.nonBlank)
   }
 
   /// Claims the account, then signs in with the new credentials. Every new account is split where the
   /// server knows the scheme (API PR #114): the password never reaches it.
   @discardableResult
-  public func claim(token: String, username: String, password: String, email: String?) async throws -> Session {
+  public func claim(token: String, username: String, password: String, email: String?, penName: String? = nil) async throws -> Session {
     let name = username.trimmed
     let split = try await splitSupported(name)
-    var request = ClaimRequest(token: token, username: name, password: password, email: email?.trimmed.nonBlank)
+    var request = ClaimRequest(token: token, username: name, password: password, email: email?.trimmed.nonBlank, penName: penName.map(PenName.normalise)?.nonBlank)
     var recoveryCode: String?
     if let lastClaim, lastClaim.token == token, let m = lastClaim.info.material {
       // End-to-end: the group made this keypair. Open it with the token, then re-wrap the very same

@@ -82,7 +82,9 @@ struct NamedRef: Decodable {
 }
 
 struct ClaimInfoDTO: Decodable {
-  let writer: NamedRef
+  /// Since API #168 the writer also carries `penName`: the name the group gave them, or null when it gave none.
+  struct Writer: Decodable { let id: Int; let name: String?; let penName: String? }
+  let writer: Writer
   let chapter: NamedRef?
   let expiresAt: String?
   // End-to-end mode: the writer's keypair, private half wrapped under the claim token.
@@ -227,6 +229,8 @@ struct ClaimRequest: Encodable {
   let username: String
   var password: String
   let email: String?
+  /// Chosen at claim, free of the change limits: the server does not count it as a change.
+  var penName: String?
   /// `"split"`: `password` is the auth key, derived with `kdfSalt`/`kdfParams` (API PR #114). Absent means plain.
   var authScheme: String?
   // End-to-end mode: the same private key, re-wrapped under the new password and a new recovery code.

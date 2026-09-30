@@ -34,6 +34,13 @@ public final class PenNameRepository {
     )
   }
 
+  /// A writer made before pen names were required who still has none (API #168): asked for one at sign-in.
+  /// True only when the server says so; an unreachable server asks nothing.
+  public func isMissing() async -> Bool {
+    guard sessions.state.user?.role == Role.user, let names = try? await names() else { return false }
+    return names.current == nil
+  }
+
   /// Sets the pen name. A refusal over the limits is `409 PenNameLimitError` with `condition` `cooldown` or
   /// `new_names` (`AppError.penNameLimit`); a taken or malformed name is a `400`.
   @discardableResult

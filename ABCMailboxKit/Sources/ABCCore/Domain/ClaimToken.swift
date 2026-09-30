@@ -46,4 +46,7 @@ public struct ClaimInfo: Equatable, Sendable {
   public let groupName: String?
   public let expiresAt: Date?
   public let endToEnd: Bool
+  /// The pen name the group already gave the writer (API #168). The claim keeps it unless another is sent; nil
+  /// means the writer has none yet and the claim must choose one.
+  public var writerPenName: String? = nil
 }
