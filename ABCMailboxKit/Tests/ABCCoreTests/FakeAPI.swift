@@ -186,7 +186,7 @@ final class FakeAPI: @unchecked Sendable {
   }
 
   private func prisonerJSON(_ pid: Int) -> [String: Any] {
-    ["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States"]]
+    ["id": pid, "chosenName": "Jane Smith", "birthName": "John Smith", "prison": 1, "inmateID": "A-\(pid)", "prison_details": ["id": 1, "prisonName": "Test Prison", "country": "United States", "mailRules": ["handwritten_only", "no_stickers"]]]
   }
 
   private func caller(_ r: Recorded) -> Account? {
@@ -224,6 +224,42 @@ final class FakeAPI: @unchecked Sendable {
     out["attachments"] = attachments.values.map(\.meta).filter { $0["message"] as? Int == m["id"] as? Int }
     out["resent_as"] = messages.filter { $0["resendOf"] as? Int == m["id"] as? Int }.map { ["id": $0["id"] ?? 0, "status": $0["status"] ?? "queued", "createdAt": $0["createdAt"] ?? NSNull()] as [String: Any] }
     return out
+  }
+
+  /// API #170: why a decline is refused, or nil. From `queued` or `printed` only (held ones too); a reason from the
+  /// three; for `facility_rule` a rule the letter's facility has; a note of at most 200 characters.
+  private func declineRefusal(_ m: [String: Any], reason: String?, rule: String?, note: String?) -> Stubbed? {
+    let from = m["status"] as? String ?? ""
+    guard from == "queued" || from == "printed" else {
+      return .error(409, info: "Error updating letter status.", extra: ["name": "LetterStatusError", "error": "A \(from) letter cannot move to declined."])
+    }
+    guard let reason, ["facility_rule", "content", "other"].contains(reason) else {
+      return .error(400, extra: ["errors": ["reason is required."], "problems": [["field": "reason", "code": "required"]]])
+    }
+    if reason == "facility_rule" {
+      let tags = ((prisonerJSON(m["prisoner"] as? Int ?? 0)["prison_details"] as? [String: Any])?["mailRules"] as? [String]) ?? []
+      guard let rule, tags.contains(rule) else { return .error(400, extra: ["errors": ["rule must be one of the facility's mail rules."], "problems": [["field": "rule", "code": "not_eligible"]]]) }
+    }
+    if (note ?? "").count > 200 { return .error(400, extra: ["errors": ["note can be at most 200 characters."]]) }
+    return nil
+  }
+
+  private func decline(_ i: Int, reason: String?, rule: String?, note: String?, by a: Account) -> Stubbed {
+    if let refusal = declineRefusal(messages[i], reason: reason, rule: rule, note: note) { return refusal }
+    let from = messages[i]["status"] as? String ?? ""
+    let words = note?.trimmingCharacters(in: .whitespaces)
+    messages[i]["status"] = "declined"; messages[i]["heldReason"] = nil
+    messages[i]["declineReason"] = reason; messages[i]["declineRule"] = reason == "facility_rule" ? rule : NSNull()
+    messages[i]["declineNote"] = words.flatMap { $0.isEmpty ? nil : $0 } ?? NSNull()
+    var history = messages[i]["status_history"] as? [[String: Any]] ?? []
+    history.append(["fromStatus": from, "toStatus": "declined", "changedBy": a.id, "createdAt": "2026-09-30T10:00:00.000Z", "reason": reason ?? NSNull(), "rule": rule ?? NSNull(), "note": note ?? NSNull()])
+    messages[i]["status_history"] = history
+    if let writer = messages[i]["user"] as? Int {
+      var detail: [String: Any] = ["status": "declined", "reason": reason ?? "other"]
+      if reason == "facility_rule", let rule { detail["rule"] = rule }
+      tellLocked(writer, "letter.status", chat: messages[i]["chat"] as? Int, message: messages[i]["id"] as? Int, detail: detail)
+    }
+    return .data(visible(messages[i], to: a))
   }
 
   private func route(_ r: Recorded) -> Stubbed {
@@ -578,10 +614,10 @@ final class FakeAPI: @unchecked Sendable {
         if accounts.first(where: { $0.id == e["readerId"] as? Int })?.keys["publicKey"] == nil { return .error(400, extra: ["errors": ["That writer has no public key."]]) }
       }
       if let replaced = body["resendOf"] as? Int {
-        // One of the same writer's returned letters to the same prisoner, or a 400 (PR #105).
+        // One of the same writer's returned (PR #105) or declined (#170) letters to the same prisoner, or a 400.
         let original = messages.first { $0["id"] as? Int == replaced }
-        guard let original, original["status"] as? String == "returned", original["user"] as? Int == (body["user"] as? Int ?? a.id), original["prisoner"] as? Int == body["prisoner"] as? Int else {
-          return .error(400, extra: ["errors": ["resendOf must be one of this writer's returned letters to the same prisoner."]])
+        guard let original, ["returned", "declined"].contains(original["status"] as? String ?? ""), original["user"] as? Int == (body["user"] as? Int ?? a.id), original["prisoner"] as? Int == body["prisoner"] as? Int else {
+          return .error(400, extra: ["errors": ["resendOf must be one of this writer's returned or declined letters to the same prisoner."]])
         }
       }
       // Paper letters (API PR #118): outgoing only, somebody must mail it, printed from birth.
@@ -655,6 +691,15 @@ final class FakeAPI: @unchecked Sendable {
     case ("PUT", "/messaging/status/batch"):
       if predatesLetterNights { return .error(404, info: "Cannot PUT /messaging/status/batch") }
       guard caller(r) != nil, let ids = body["ids"] as? [Int], let to = body["status"] as? String else { return .error(400, extra: ["errors": ["ids must be a list of letter ids."]]) }
+      if to == "declined", let a = caller(r) {
+        // All or none (API #170): check every letter, then decline them all.
+        for id in ids {
+          guard let m = messages.first(where: { $0["id"] as? Int == id }) else { return .error(404, info: "Error updating letter status.", extra: ["error": "Message \(id) not found"]) }
+          if let refusal = declineRefusal(m, reason: body["reason"] as? String, rule: body["rule"] as? String, note: body["note"] as? String) { return refusal }
+        }
+        for id in ids { if let i = messages.firstIndex(where: { $0["id"] as? Int == id }) { _ = decline(i, reason: body["reason"] as? String, rule: body["rule"] as? String, note: body["note"] as? String, by: a) } }
+        return .data(["status": to, "count": ids.count, "ids": ids])
+      }
       let order = ["queued", "printed", "mailed", "returned"]
       // All or none: look at every letter before touching one.
       for id in ids {
@@ -699,6 +744,7 @@ final class FakeAPI: @unchecked Sendable {
       guard let a = caller(r), let i = messages.firstIndex(where: { $0["id"] as? Int == body["id"] as? Int }) else { return .error(404, info: "No such letter.") }
       let order = ["queued", "printed", "mailed", "returned"], from = messages[i]["status"] as? String ?? "", to = body["status"] as? String ?? ""
       let reason = body["reason"] as? String, note = body["note"] as? String
+      if to == "declined" { return decline(i, reason: reason, rule: body["rule"] as? String, note: note, by: a) }
       if to == "returned" {
         guard let reason, ["refused", "rule_violation", "transferred", "released", "bad_address", "unknown"].contains(reason) else { return .error(400, extra: ["errors": ["A returned letter needs a reason."]]) }
         if (note ?? "").count > 200 { return .error(400, extra: ["errors": ["note can be at most 200 characters."]]) }

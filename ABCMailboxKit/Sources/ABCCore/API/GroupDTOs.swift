@@ -9,8 +9,10 @@ import Foundation
 struct StatusRequest: Encodable {
   let id: Int
   let status: String
-  /// With `returned` only; the API refuses them on any other move.
+  /// With `returned` or `declined` only; the API refuses them on any other move.
   var reason: String?
+  /// With `declined` for `facility_rule` only: the tag of the facility's rule (API #170).
+  var rule: String?
   var note: String?
   /// Printing a held letter on purpose (API PR #106). Omitted otherwise.
   var release: Bool?
@@ -60,6 +62,10 @@ struct MemberKeyRequest: Encodable {
 struct BatchStatusRequest: Encodable {
   let ids: [Int]
   let status: String
+  /// With `declined` (API #170): the reason, the rule for `facility_rule`, and a note, the same for every letter.
+  var reason: String?
+  var rule: String?
+  var note: String?
 }
 
 struct BatchStatusDTO: Decodable {

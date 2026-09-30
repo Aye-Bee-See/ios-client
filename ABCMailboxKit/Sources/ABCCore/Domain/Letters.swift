@@ -4,6 +4,8 @@ public enum LetterStatus: String, CaseIterable, Sendable {
   case queued, printed, mailed, received
   /// The post brought it back (API PR #105). From `mailed` only, and final.
   case returned
+  /// Its relay group decided not to mail it (API #170). From `queued` or `printed`, and final. It did not go.
+  case declined
   case unknown = ""
 
   public var key: String { rawValue }
@@ -15,6 +17,7 @@ public enum LetterStatus: String, CaseIterable, Sendable {
     case .mailed: return "Mailed"
     case .received: return "Received"
     case .returned: return "Returned"
+    case .declined: return "Not mailed"
     case .unknown: return "Unknown"
     }
   }
@@ -77,6 +80,46 @@ public enum ReturnReason: String, CaseIterable, Identifiable, Sendable {
   public var doubtsTheAddress: Bool { self == .transferred || self == .released || self == .badAddress }
 }
 
+/// Why a relay group decided not to mail a letter (API #170). The API sends a code; the words are decided here, in
+/// the Android app's wording.
+public enum DeclineReason: String, CaseIterable, Identifiable, Sendable {
+  case facilityRule = "facility_rule"
+  case content, other
+
+  public var id: String { rawValue }
+  public var key: String { rawValue }
+
+  /// A code this version has never heard of is still a decline: it reads as "other".
+  public static func from(key: String?) -> DeclineReason? { key.flatMap { $0.isEmpty ? nil : DeclineReason(rawValue: $0) ?? .other } }
+
+  /// For the group admin choosing why.
+  public var choice: String {
+    switch self {
+    case .facilityRule: return "It would break one of the facility's rules"
+    case .content: return "It is inappropriate or unsafe to send"
+    case .other: return "Something else (say what in the note)"
+    }
+  }
+
+  /// For the writer.
+  public var sentence: String {
+    switch self {
+    case .facilityRule: return "Not sent: it would have broken one of the facility's mail rules."
+    case .content: return "Not sent: the group judged it inappropriate or unsafe to send."
+    case .other: return "Not sent: the group decided not to mail it."
+    }
+  }
+
+  /// What the writer can do about it.
+  public var advice: String {
+    switch self {
+    case .facilityRule: return "Change what the rule is about, then send it again. Mail that breaks a rule is usually thrown away or sent back, and can count against the person inside."
+    case .content: return "Read it again with that in mind. You can write a new version and send it."
+    case .other: return "The group's note may say why. You can change it and send it again."
+    }
+  }
+}
+
 /// Why a queued letter is waiting instead of being printed (API PR #106): the person it is for was
 /// moved or freed after it was written. A hold is not a status; the letter stays `queued`.
 public enum HeldReason: String, Sendable {
@@ -122,6 +165,9 @@ public struct StatusChange: Equatable, Sendable {
   /// For a move to `returned`: why, and a few words from whoever handled the envelope.
   public var reason: ReturnReason? = nil
   public var note: String? = nil
+  /// For a move to `declined` (API #170): why, and the tag of the facility rule it would break.
+  public var declineReason: DeclineReason? = nil
+  public var declineRule: String? = nil
 }
 
 public struct Letter: Equatable, Identifiable, Sendable {
@@ -150,6 +196,11 @@ public struct Letter: Equatable, Identifiable, Sendable {
   public var returnReason: ReturnReason? = nil
   /// Why this queued letter is held; nil when it is not.
   public var heldReason: HeldReason? = nil
+  /// For a `declined` letter (API #170): why, the tag of the facility rule it would break, and the group's few words
+  /// to the writer (never encrypted).
+  public var declineReason: DeclineReason? = nil
+  public var declineRule: String? = nil
+  public var declineNote: String? = nil
   /// The returned letter this one was sent again for.
   public var resendOf: Int? = nil
   /// For a returned letter: what was sent in its place, if anything.
@@ -168,8 +219,10 @@ public struct Letter: Equatable, Identifiable, Sendable {
   var returnNoteOnLetter: String? = nil
   /// The API said what the note is (API PR #117), even if that is "none". False for an older API, which says nothing.
   var returnNoteKnown = false
-  /// A returned letter of one's own can be sent again, once.
-  public var canSendAgain: Bool { !fromPrisoner && status == .returned && resentAs.isEmpty }
+  /// A returned or declined letter of one's own can be sent again, once.
+  public var canSendAgain: Bool { !fromPrisoner && (status == .returned || status == .declined) && resentAs.isEmpty }
+  /// A relay group may decline a letter until it is mailed (API #170), a held or paper one included.
+  public var canBeDeclined: Bool { !fromPrisoner && (status == .queued || status == .printed) }
 
   /// The brief's rule: a writer may edit or delete only while the letter is queued.
   public var canEdit: Bool { !fromPrisoner && status == .queued }

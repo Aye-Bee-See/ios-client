@@ -35,6 +35,30 @@ final class LetterWorkModel {
     }
   }
 
+  /// The group decides not to mail it (API #170). The writer is told why, and can send it again.
+  func decline(reason: DeclineReason, rule: String?, note: String) async -> Bool {
+    guard var current = item.value else { return false }
+    busy = true
+    defer { busy = false }
+    do {
+      var updated = try await app.container.group.decline(messageId: messageId, reason: reason, rule: rule, note: note)
+      updated.attachments = current.letter.attachments
+      current.letter = updated
+      item = .loaded(current)
+      app.show("Not sent. The writer has been told.")
+      return true
+    } catch {
+      let e = AppError.from(error)
+      if e.isChangedMeanwhile {
+        await load()
+        app.show("Someone else changed this letter a moment ago. This is how it stands now.")
+        return true
+      }
+      app.show(e.userMessage ?? "Could not record the decision.")
+      return false
+    }
+  }
+
   /// The post brought it back (API PR #105). The writer is told why, and can send it again.
   func markReturned(reason: ReturnReason, note: String) async -> Bool {
     guard var current = item.value else { return false }
@@ -105,6 +129,7 @@ struct LetterWorkView: View {
   @State private var confirmMailed = false
   @State private var confirmRelease = false
   @State private var recordReturn = false
+  @State private var decline = false
   @State private var choosePartner = false
   private let app: AppModel
 
@@ -130,6 +155,11 @@ struct LetterWorkView: View {
         Button("Leave it waiting", role: .cancel) {}
       } message: {
         Text("This lifts the hold. Do it only if your group knows the letter will reach them where it is going.")
+      }
+      .sheet(isPresented: $decline) {
+        DeclineSheet(count: 1, rules: model.item.value?.prisoner?.facility?.rules.rules ?? []) { reason, rule, note in
+          await model.decline(reason: reason, rule: rule, note: note)
+        }
       }
       .sheet(isPresented: $recordReturn) {
         ReturnSheet(groupName: app.user?.displayName) { reason, note in await model.markReturned(reason: reason, note: note) }
@@ -166,7 +196,8 @@ struct LetterWorkView: View {
       }
       ForEach(letter.attachments) { a in AttachmentRow(attachment: a) { Task { await model.open(a) } } }
 
-      if !letter.locked, !letter.paper, !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      // Not for a declined letter: the group decided it does not go, and a printout invites the opposite.
+      if !letter.locked, !letter.paper, letter.status != .declined, !letter.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         Button("Print the letter") { PrintLetter.print(jobName: "Letter to \(p?.name ?? "prisoner")", body: letter.body) }.buttonStyle(.outlineWide)
       }
       switch letter.status {
@@ -181,13 +212,22 @@ struct LetterWorkView: View {
       case .mailed:
         Muted("Mailed\(letter.statusChangedAt.map { " on \(Format.long($0))" } ?? "").", font: Theme.bodyLarge)
         Button("It came back…") { recordReturn = true }.buttonStyle(.outlineWide).accessibilityIdentifier("returned")
+      case .declined:
+        let reason = letter.declineReason ?? .other
+        Muted("Not sent\(letter.statusChangedAt.map { ": declined on \(Format.long($0))" } ?? "") (\(reason.choice.lowercased())). The writer has been told and can send it again.", font: Theme.bodyLarge)
+        if let tag = letter.declineRule { Muted("The rule: \(MailRuleCatalog.compiled.resolve(tag).label)") }
+        if let note = letter.declineNote { Muted("Your group's note: \(note)") }
       case .returned:
         Muted("Came back\(letter.statusChangedAt.map { " on \(Format.long($0))" } ?? ""): \((letter.returnReason ?? .unknown).choice.lowercased()). The writer has been told and can send it again.", font: Theme.bodyLarge)
         if let note = letter.returnNote { Muted("Your group's note: \(note)") }
       default: EmptyView()
       }
+      // Not mailed, not declined, and only by a group admin: a superadmin holds no key to read it (API #170).
+      if letter.canBeDeclined, app.user?.role == Role.chapter {
+        Button("Don't send…") { decline = true }.buttonStyle(.destructiveLink).accessibilityIdentifier("decline")
+      }
       // End-to-end only, and only where the facility has another relay group: the server permits no other readers.
-      if !model.partners.isEmpty, !letter.locked, letter.status != .mailed, letter.status != .returned {
+      if !model.partners.isEmpty, !letter.locked, letter.status != .mailed, letter.status != .returned, letter.status != .declined {
         Button("Share with a partner group") { choosePartner = true }.buttonStyle(.outlineWide)
       }
       if let threadId = letter.threadId { Button("Open the conversation") { app.push(.thread(chatId: threadId)) }.buttonStyle(.link) }

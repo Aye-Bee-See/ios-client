@@ -124,10 +124,19 @@ extension MessageDTO {
       keep: keep ?? false,
       createdAt: createdAt.instant,
       statusChangedAt: statusChangedAt.instant,
-      history: (statusHistory ?? []).map { StatusChange(from: $0.fromStatus.map { LetterStatus.from(key: $0) }, to: .from(key: $0.toStatus), at: $0.createdAt.instant, byUserId: $0.changedBy, reason: .from(key: $0.reason), note: $0.note?.nonBlank) },
+      history: (statusHistory ?? []).map { h in
+        let to = LetterStatus.from(key: h.toStatus)
+        // One `reason` field on the wire, meaning a return's reason or a decline's, by where the letter went.
+        return StatusChange(from: h.fromStatus.map { LetterStatus.from(key: $0) }, to: to, at: h.createdAt.instant, byUserId: h.changedBy,
+                            reason: to == .declined ? nil : .from(key: h.reason), note: h.note?.nonBlank,
+                            declineReason: to == .declined ? .from(key: h.reason) : nil, declineRule: to == .declined ? h.rule?.nonBlank : nil)
+      },
       attachments: (attachments ?? []).map { $0.toDomain() },
       returnReason: .from(key: returnReason),
       heldReason: .from(key: heldReason),
+      declineReason: .from(key: declineReason),
+      declineRule: declineRule?.nonBlank,
+      declineNote: declineNote?.nonBlank,
       resendOf: resendOf,
       resentAs: (resentAs ?? []).map { Resend(id: $0.id, status: .from(key: $0.status), createdAt: $0.createdAt.instant) },
       paper: paper ?? false,

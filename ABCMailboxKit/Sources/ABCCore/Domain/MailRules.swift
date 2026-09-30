@@ -68,6 +68,12 @@ public struct MailRules: Equatable, Sendable {
   public var isEmpty: Bool { rules.isEmpty && pageLimit == nil && photoLimit == nil && languages.isEmpty }
   public func has(_ tag: String) -> Bool { rules.contains { $0.tag == tag } }
 
+  /// The rules every one of several facilities has, in the first one's order: all a batch decline may name (API #170).
+  public static func common(_ each: [MailRules]) -> [MailRule] {
+    guard let first = each.first else { return [] }
+    return first.rules.filter { rule in each.allSatisfy { $0.has(rule.tag) } }
+  }
+
   /// Tags the app acts on. Everything else is display only.
   public var forbidsPhotos: Bool { has(Self.noPhotos) }
 

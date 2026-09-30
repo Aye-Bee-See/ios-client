@@ -44,7 +44,7 @@ private enum QueueFilter: Hashable {
   case held
 }
 
-private let queueFilters: [(value: QueueFilter, label: String)] = [(.status(.queued), "Queued"), (.held, "Held"), (.status(.printed), "Printed"), (.status(.mailed), "Mailed"), (.status(.returned), "Returned")]
+private let queueFilters: [(value: QueueFilter, label: String)] = [(.status(.queued), "Queued"), (.held, "Held"), (.status(.printed), "Printed"), (.status(.mailed), "Mailed"), (.status(.returned), "Returned"), (.status(.declined), "Not sent")]
 
 /// The print queue: letters this group relays, one status at a time.
 private struct QueueTab: View {
@@ -57,6 +57,7 @@ private struct QueueTab: View {
   @State private var selected: Set<Int> = []
   @State private var busy = false
   @State private var confirmMailed = false
+  @State private var declineSelected = false
 
   init(app: AppModel, groupId: Int?) {
     self.app = app
@@ -99,6 +100,13 @@ private struct QueueTab: View {
         let chosen = filter ?? .status(.queued)
         Task { await loader.reset(fetch: Self.fetch(app, groupId, chosen)) }
       }
+      .sheet(isPresented: $declineSelected) {
+        let chosen = loader.items.filter { selected.contains($0.id) }
+        let common = Self.commonRules(chosen)
+        DeclineSheet(count: chosen.count, rules: common, noCommonRules: chosen.count > 1 && common.isEmpty) { reason, rule, note in
+          await declineChosen(reason: reason, rule: rule, note: note)
+        }
+      }
       .confirmationDialog("Mark \(Format.plural(selected.count, "letter")) as mailed?", isPresented: $confirmMailed, titleVisibility: .visible) {
         Button("They are in the mail") { Task { await markSelected() } }
         Button("Not yet", role: .cancel) {}
@@ -129,6 +137,10 @@ private struct QueueTab: View {
       Button("Cancel") { selecting = false; selected = [] }.buttonStyle(.link)
       Spacer()
       Muted("\(selected.count) selected")
+      // Group admins only: a superadmin holds no key to read a letter, so cannot decline one (API #170).
+      if app.user?.role == Role.chapter {
+        Button("Don't send…") { declineSelected = true }.buttonStyle(.destructiveLink).disabled(selected.isEmpty || busy).accessibilityIdentifier("declineSelected")
+      }
       Button(busy ? "Marking…" : "Mark as \(nextStatus?.label.lowercased() ?? "")") {
         if nextStatus == .mailed { confirmMailed = true } else { Task { await markSelected() } }
       }
@@ -161,12 +173,41 @@ private struct QueueTab: View {
     }
   }
 
+  /// The rules every chosen letter's facility shares: the only ones a batch may name. A letter whose facility is not
+  /// known shares none.
+  static func commonRules(_ items: [QueueItem]) -> [MailRule] {
+    MailRules.common(items.map { $0.prisoner?.facility?.rules ?? MailRules() })
+  }
+
+  private func declineChosen(reason: DeclineReason, rule: String?, note: String) async -> Bool {
+    guard !selected.isEmpty, !busy else { return false }
+    busy = true
+    defer { busy = false }
+    do {
+      let ids = loader.items.map(\.id).filter(selected.contains)
+      let declined = try await app.container.group.declineMany(messageIds: ids, reason: reason, rule: rule, note: note)
+      app.show(declined == 1 ? "1 letter not sent. Its writer has been told." : "\(declined) letters not sent. Their writers have been told.")
+      selecting = false; selected = []
+      await loader.refresh()
+      return true
+    } catch let e as AppError where e.isChangedMeanwhile {
+      app.show("Someone else has just changed one of these letters. The list has been refreshed; nothing was declined.")
+      await loader.refresh()
+      selected.formIntersection(loader.items.map(\.id))
+      return true
+    } catch {
+      app.show("Nothing was changed. " + (AppError.from(error).userMessage ?? "The letters could not be declined."))
+      return false
+    }
+  }
+
   private var emptyText: String {
     switch filter ?? .status(.queued) {
     case .status(.queued): return "Nothing is waiting to be printed."
     case .held: return "No letter is held. A letter is held when the person it is for was moved or freed after it was written."
     case .status(.printed): return "Nothing is printed and waiting to be mailed."
     case .status(.returned): return "No letter has come back."
+    case .status(.declined): return "No letter has been declined."
     default: return "No mailed letters to show."
     }
   }
@@ -200,7 +241,7 @@ private struct QueueRow: View {
       title: item.prisoner?.name ?? "Prisoner #\(letter.prisonerId ?? 0)",
       secondary: item.prisoner?.facility.map { $0.name + ($0.country.map { ", \($0)" } ?? "") },
       subtitle: facts.compactMap { $0 }.joined(separator: " · "),
-      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.paper && letter.status == .printed ? "On paper, nothing to print" : letter.relayNote.map { "Note: \($0)" },
+      notice: letter.isHeld ? "Held: \(heldWord)" : letter.status == .returned ? "Came back: \((letter.returnReason ?? .unknown).choice.lowercased())" : letter.status == .declined ? "Not sent: \((letter.declineReason ?? .other).choice.lowercased())" : letter.paper && letter.status == .printed ? "On paper, nothing to print" : letter.relayNote.map { "Note: \($0)" },
       horizontalPadding: tick == .notSelecting ? 20 : 8, action: action
     )
     if tick == .notSelecting {

@@ -190,7 +190,7 @@ struct ThreadView: View {
   private func sendAgain(_ letter: Letter, in thread: LetterThread) -> ComposeRequest {
     var request = ComposeRequest(prisonerId: thread.prisonerId)
     if model.isStaff, let writer = thread.writer, writer.anonymousForGroupId == nil { request.writerId = writer.id; request.writerName = writer.name }
-    if letter.status == .returned { request.resendOf = letter.id } else { request.replaceHeldId = letter.id }
+    if letter.status == .returned || letter.status == .declined { request.resendOf = letter.id } else { request.replaceHeldId = letter.id }
     return request
   }
 
@@ -273,6 +273,7 @@ struct LetterCard: View {
       ForEach(letter.attachments) { a in AttachmentRow(attachment: a) { onOpen(a) } }
       if !statusLine.isEmpty { Muted(statusLine, font: Theme.label) }
       if letter.status == .returned { returned }
+      if letter.status == .declined { declined }
       if let reason = letter.heldReason, letter.isHeld { held(reason) }
       if letter.canEdit, !letter.locked, !letter.awaitingShare, mayChange {
         HStack(spacing: 20) {
@@ -302,6 +303,28 @@ struct LetterCard: View {
       } else if mayChange, !letter.fromPrisoner {
         Muted((letter.returnReason ?? .unknown).advice)
         if !letter.locked, !letter.awaitingShare { Button("Send it again", action: onSendAgain).buttonStyle(.link).disabled(busy) }
+      }
+    }
+    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+    .background(Theme.redWash, in: RoundedRectangle(cornerRadius: 4))
+  }
+
+  /// Its group decided not to mail it (API #170): why, in the app's words; the rule, by its label; what the group
+  /// wrote, in theirs; and sending it again, as after a return.
+  @ViewBuilder private var declined: some View {
+    let reason = letter.declineReason ?? .other
+    VStack(alignment: .leading, spacing: 6) {
+      Text(reason.sentence).font(Theme.bodyMedium).foregroundStyle(Theme.red)
+      if let tag = letter.declineRule { Text("The rule: \(MailRuleCatalog.compiled.resolve(tag).label)").font(Theme.bodyMedium) }
+      if let note = letter.declineNote {
+        FieldLabel("From \(letter.relayGroupName ?? "the relay group"), about why")
+        Text(note).font(Theme.bodyMedium).textSelection(.enabled)
+      }
+      if let again = letter.resentAs.last {
+        Muted("Sent again\(again.createdAt.map { " on \(Format.long($0))" } ?? ""). That letter is \(again.status.label.lowercased()).")
+      } else if mayChange, !letter.fromPrisoner {
+        Muted(reason.advice)
+        if !letter.locked, !letter.awaitingShare { Button("Write it again", action: onSendAgain).buttonStyle(.link).disabled(busy) }
       }
     }
     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -340,6 +363,7 @@ struct LetterCard: View {
     case .mailed: return "Mailed by \(group)\(on)"
     case .received: return "Recorded by a support group"
     case .returned: return "Came back\(on)"
+    case .declined: return "\(letter.relayGroupName ?? "Its group") decided not to send it\(on)"
     case .unknown: return ""
     }
   }

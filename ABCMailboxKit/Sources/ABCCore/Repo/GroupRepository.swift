@@ -156,6 +156,33 @@ public final class GroupRepository {
 
   public static let returnNoteLimit = 200
 
+  /// The relay group decides not to mail a queued or printed letter (API #170), a held one included, with no
+  /// `release`. `rule` is the tag of one of that letter's facility's rules, and goes with `facilityRule` only.
+  /// `note` is read by the writer and never encrypted, so it says why and quotes nothing. Final: it cannot be undone.
+  public func decline(messageId: Int, reason: DeclineReason, rule: String?, note: String?) async throws -> Letter {
+    let words = try Self.declineNote(note)
+    return try await move(StatusRequest(id: messageId, status: LetterStatus.declined.key, reason: reason.key, rule: reason == .facilityRule ? rule : nil, note: words))
+  }
+
+  /// Several at once, all or none, with one reason (API #170). A rule must belong to every letter's facility.
+  public func declineMany(messageIds: [Int], reason: DeclineReason, rule: String?, note: String?) async throws -> Int {
+    var ids: [Int] = []
+    for id in messageIds where !ids.contains(id) { ids.append(id) }
+    guard !ids.isEmpty else { return 0 }
+    guard ids.count <= Self.batchLimit else { throw AppError.validation(["At most \(Self.batchLimit) letters can be declined at once."]) }
+    let words = try Self.declineNote(note)
+    var request = BatchStatusRequest(ids: ids, status: LetterStatus.declined.key)
+    request.reason = reason.key; request.rule = reason == .facilityRule ? rule : nil; request.note = words
+    let envelope: APIEnvelope<BatchStatusDTO> = try await api.send("PUT", "messaging/status/batch", body: request)
+    return envelope.data?.count ?? ids.count
+  }
+
+  private static func declineNote(_ note: String?) throws -> String? {
+    let words = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard words.count <= returnNoteLimit else { throw AppError.validation(["The note can be at most \(returnNoteLimit) characters."]) }
+    return words.isEmpty ? nil : words
+  }
+
   private func move(_ request: StatusRequest) async throws -> Letter {
     await codec.ready()
     let envelope: APIEnvelope<MessageDTO> = try await api.send("PUT", "messaging/status", body: request)

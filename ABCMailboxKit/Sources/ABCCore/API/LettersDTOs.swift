@@ -114,6 +114,10 @@ struct MessageDTO: Decodable {
   let returnNote: String?
   let returnNoteKnown: Bool
   let heldReason: String?
+  /// API #170: why the relay group declined it, the facility rule's tag, and the group's note to the writer.
+  let declineReason: String?
+  let declineRule: String?
+  let declineNote: String?
   let resendOf: Int?
   let resentAs: [ResentAsDTO]?
   /// API PR #118: on paper from birth, `printed` from birth, nothing to print.
@@ -123,7 +127,7 @@ struct MessageDTO: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case id, chat, sender, prisoner, user, status, relayChapter, relayNote, messageText, keep, statusChangedAt, createdAt, attachments
-    case returnReason, returnNote, heldReason, resendOf, paper
+    case returnReason, returnNote, heldReason, resendOf, paper, declineReason, declineRule, declineNote
     case resentAs = "resent_as", prisonerDetails = "prisoner_details"
     case ciphertext, nonce, relayNoteCiphertext, relayNoteNonce, envelopes
     case statusHistory = "status_history", relayGroup = "relay_group"
@@ -156,6 +160,9 @@ struct MessageDTO: Decodable {
     paper = try c.decodeIfPresent(Bool.self, forKey: .paper)
     returnNote = try c.decodeIfPresent(String.self, forKey: .returnNote)
     heldReason = try c.decodeIfPresent(String.self, forKey: .heldReason)
+    declineReason = try c.decodeIfPresent(String.self, forKey: .declineReason)
+    declineRule = try c.decodeIfPresent(String.self, forKey: .declineRule)
+    declineNote = try c.decodeIfPresent(String.self, forKey: .declineNote)
     resendOf = try c.decodeIfPresent(Int.self, forKey: .resendOf)
     resentAs = try c.decodeIfPresent([ResentAsDTO].self, forKey: .resentAs)
     prisonerDetails = try c.decodeIfPresent(PrisonerDTO.self, forKey: .prisonerDetails)
@@ -180,6 +187,8 @@ struct StatusHistoryDTO: Decodable {
   let createdAt: String?
   let reason: String?
   let note: String?
+  /// For a move to `declined` (API #170).
+  let rule: String?
 }
 
 struct AttachmentDTO: Decodable {
