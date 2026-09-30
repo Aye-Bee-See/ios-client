@@ -18,7 +18,9 @@ struct PrisonerPhotoView: View {
           default: Theme.paperRaised
           }
         }
-        .frame(maxWidth: .infinity).frame(height: 240).clipShape(RoundedRectangle(cornerRadius: 4))
+        // Square, as uploads are cropped: a wide frame would cut the top and bottom off a face.
+        .frame(width: 240, height: 240).clipShape(RoundedRectangle(cornerRadius: 4))
+        .frame(maxWidth: .infinity)
         .accessibilityLabel("Photo of \(name)")
         if let credit = photo.credit { Muted(credit, font: Theme.caption) }
       }

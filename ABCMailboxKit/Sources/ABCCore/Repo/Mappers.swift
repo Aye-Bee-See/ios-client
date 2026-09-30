@@ -59,7 +59,7 @@ extension PrisonerDTO {
       bio: bio?.nonBlank,
       interests: (interests ?? []).filter { !$0.isBlank },
       // Hosted pictures only (API #130). A link to another site would tell that site who looks at whom.
-      photo: photo.flatMap { p in p.hosted == true ? p.url?.nonBlank.map { PrisonerPhoto(url: $0, credit: p.credit?.nonBlank, updatedAt: p.updatedAt.instant) } : nil },
+      photo: photo?.toDomain(),
       supportWebsite: supportWebsite?.nonBlank,
       donationInfo: donationInfo?.nonBlank,
       status: status,
@@ -69,6 +69,14 @@ extension PrisonerDTO {
       supportGroups: (supportGroups ?? []).map { $0.toDomain(catalog) },
       inmateId: inmateID?.nonBlank
     )
+  }
+}
+
+extension PhotoDTO {
+  /// Hosted pictures only (API #130). A link to another site would tell that site who looks at whom.
+  func toDomain() -> PrisonerPhoto? {
+    guard hosted == true, let url = url?.nonBlank else { return nil }
+    return PrisonerPhoto(url: url, credit: credit?.nonBlank, updatedAt: updatedAt.instant)
   }
 }
 

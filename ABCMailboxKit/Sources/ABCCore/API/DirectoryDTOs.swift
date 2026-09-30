@@ -44,6 +44,12 @@ struct PhotoDTO: Decodable {
   let updatedAt: String?
 }
 
+/// `POST /prisoner/photo`'s answer: the record's id and its photo as it now is.
+struct StoredPhotoDTO: Decodable {
+  let id: Int?
+  let photo: PhotoDTO?
+}
+
 struct PrisonDTO: Decodable {
   let id: Int
   let prisonName: String

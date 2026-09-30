@@ -29,6 +29,8 @@ enum Route: Hashable {
   case groupNumbers
   /// Invite codes (API PR #116): print slips, see the quota, cancel unused codes.
   case inviteCodes
+  /// Staff: add, replace or take down a prisoner's photo (API #166).
+  case prisonerPhoto(id: Int, name: String, hasPhoto: Bool, credit: String?)
   case changePassword
   /// A writer's pen name, and the limits on changing it (API #127).
   case penName
@@ -180,6 +182,10 @@ final class AppModel {
     inboxPath = chat.map { [.thread(chatId: $0)] } ?? []
     Task { await container.activity.markAllRead() }
   }
+
+  /// Bumped when a photo was added, replaced or taken down, so the prisoner page under it reads the record again.
+  private(set) var photoVersion = 0
+  func photoChanged() { photoVersion += 1 }
 
   // MARK: A pen name for accounts made before it was required (API #168)
 

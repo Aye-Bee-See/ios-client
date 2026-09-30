@@ -53,6 +53,22 @@ public final class DirectoryRepository {
     self.offline = offline
   }
 
+  // MARK: Photos (API #130, #166): a superadmin or any group admin of an active group
+
+  /// Sends a photo already readied by `PhotoPreparer`. `credit` is shown beside it (at most 200 characters).
+  /// The server answers the photo as it now is, with a new address, so a cached old picture is never shown.
+  @discardableResult
+  public func uploadPhoto(prisonerId: Int, jpeg: Data, credit: String?) async throws -> PrisonerPhoto? {
+    var fields = [("prisoner", String(prisonerId))]
+    if let credit = credit?.trimmingCharacters(in: .whitespacesAndNewlines).nonBlank { fields.append(("credit", credit)) }
+    let envelope: APIEnvelope<StoredPhotoDTO> = try await api.upload("prisoner/photo", fields: fields, file: UploadFile(field: "photo", filename: "photo.jpg", mimeType: "image/jpeg", data: jpeg))
+    return envelope.data?.photo?.toDomain()
+  }
+
+  public func removePhoto(prisonerId: Int) async throws {
+    try await api.send("DELETE", "prisoner/photo", body: ["prisoner": prisonerId])
+  }
+
   /// The live master list, fetched once per process. Admins can change the list at any time
   /// (API PR #93), so it is only the fallback: each facility read carries the wording of its own
   /// rules (`mail_rule_details`), which the mapper prefers.

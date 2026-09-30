@@ -38,6 +38,10 @@ public struct SessionUser: Codable, Equatable, Sendable {
 
   public var displayName: String { name?.nonBlank ?? username }
   public var isStaff: Bool { role == Role.chapter || role == Role.admin }
+  /// Who may add or remove a directory photo (API #166): a superadmin or a group admin, whose group must also be
+  /// active; the server says so if it is not.
+  public var mayChangePhotos: Bool { isStaff }
+  public var isSuperadmin: Bool { role == Role.admin }
   /// The group this account acts for, when it is a group member.
   public var staffGroupId: Int? { isStaff ? chapterId : nil }
 }
