@@ -121,6 +121,7 @@ struct RouteView: View {
     case .groupKey: GroupKeyView(app: app)
     case .groupNumbers: GroupNumbersView(app: app)
     case .inviteCodes: InviteCodesView(app: app)
+    case .prisonerPhoto(let id, let name, let hasPhoto, let credit): PrisonerPhotoEditView(app: app, prisonerId: id, name: name, hasPhoto: hasPhoto, credit: credit)
     case .changePassword: ChangePasswordView(app: app)
     case .penName: PenNameView(app: app)
     case .deleteAccount: DeleteAccountView(app: app)

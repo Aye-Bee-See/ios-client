@@ -15,6 +15,7 @@ struct PrisonerView: View {
       .navigationTitle(prisoner.value?.name ?? "Prisoner")
       .navigationBarTitleDisplayMode(.inline)
       .task { if prisoner.value == nil { await load() } }
+      .onChange(of: app.photoVersion) { Task { await load() } }
   }
 
   private func load() async {
@@ -29,6 +30,13 @@ struct PrisonerView: View {
       if let notice = p.statusNotice { AlertBanner("⚠ \(notice)") }
       if let photo = p.photo {
         PrisonerPhotoView(photo: photo, name: p.name, apiBase: URL(string: app.container.devServer.baseURL))
+      }
+      // Staff only (API #166); the server says so if the group is not active.
+      if app.user?.mayChangePhotos == true {
+        Button(p.photo == nil ? "Add a photo" : "Change or take down the photo") {
+          app.push(.prisonerPhoto(id: p.id, name: p.name, hasPhoto: p.photo != nil, credit: p.photo?.credit))
+        }
+        .buttonStyle(.link)
       }
       Text(p.name).font(Theme.headline)
       let alsoKnown = [p.birthName].compactMap { $0 } + p.aliases
