@@ -160,7 +160,9 @@ public final class APIClient: Sendable {
         FieldProblem(field: p.field, code: p.code ?? "validation_failed", min: p.params?.min, max: p.params?.max, message: sentence)
       })
     case 401: return .unauthorized(info)
-    case 403: return .forbidden(info ?? "You are not allowed to do that.")
+    case 403:
+      if envelope?.code == "group_block" { return .groupBlock(envelope?.error ?? info) }
+      return .forbidden(info ?? "You are not allowed to do that.")
     // Like a 409, a 404 may carry the useful sentence in `error` ("Message 99999 not found") under a general `info`.
     case 404: return .notFound(envelope?.error ?? info)
     // Lifecycle refusals put the useful sentence in `error` ("A printed letter cannot move to queued"); `info` is generic.

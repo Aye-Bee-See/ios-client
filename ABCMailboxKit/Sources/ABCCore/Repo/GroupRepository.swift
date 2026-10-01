@@ -156,6 +156,59 @@ public final class GroupRepository {
 
   public static let returnNoteLimit = 200
 
+  // MARK: - Blocking a writer (API #171) and recommending a site-wide block (API #172)
+
+  public static let blockReasonLimit = 500
+  public static let recommendationReasonLimit = 1000
+
+  /// Stops a writer sending through this group. The reason is told to the writer. Answers how many of their letters
+  /// waiting here are now held. Any group admin of an active group, for their own group; a superadmin bans instead.
+  @discardableResult
+  public func block(writerId: Int, reason: String) async throws -> Int {
+    let words = try Self.reason(reason, limit: Self.blockReasonLimit)
+    let envelope: APIEnvelope<BlockedDTO> = try await api.send("POST", "chapter/block", body: BlockRequest(user: writerId, reason: words))
+    return envelope.data?.held ?? 0
+  }
+
+  /// Lifts a block. Answers how many held letters went back into the queue.
+  @discardableResult
+  public func unblock(writerId: Int) async throws -> Int {
+    let envelope: APIEnvelope<BlockedDTO> = try await api.send("DELETE", "chapter/block", body: BlockRequest(user: writerId))
+    return envelope.data?.released ?? 0
+  }
+
+  public func blocks() async throws -> [WriterBlock] {
+    let envelope: APIEnvelope<[BlockRowDTO]> = try await api.get("chapter/blocks")
+    return (envelope.data ?? []).compactMap { row in
+      guard let id = row.writer?.id else { return nil }
+      return WriterBlock(writerId: id, writerName: row.writer?.penName?.nonBlank ?? row.writer?.name?.nonBlank, reason: row.reason?.nonBlank,
+                         blockedBy: row.blockedBy?.name?.nonBlank ?? row.blockedBy?.username?.nonBlank, blockedAt: row.blockedAt.instant)
+    }
+  }
+
+  /// Asks the superadmins to block a writer on the whole site. Only they read the reason; the writer is not told.
+  /// One waiting recommendation per group and writer: another is `409`, condition `pending`.
+  public func recommendBan(writerId: Int, reason: String) async throws {
+    let words = try Self.reason(reason, limit: Self.recommendationReasonLimit)
+    try await api.send("POST", "moderation/ban-recommendation", body: BanRecommendationRequest(user: writerId, reason: words))
+  }
+
+  public func banRecommendations() async throws -> [BanRecommendation] {
+    let envelope: APIEnvelope<[BanRecommendationDTO]> = try await api.get("moderation/ban-recommendations")
+    return (envelope.data ?? []).map { row in
+      BanRecommendation(id: row.id, writerId: row.writer?.id, writerName: row.writer?.penName?.nonBlank ?? row.writer?.name?.nonBlank, reason: row.reason?.nonBlank,
+                        status: BanRecommendation.Status(rawValue: row.status ?? "") ?? .pending, recommendedAt: row.createdAt.instant,
+                        decidedAt: row.decidedAt.instant, decisionNote: row.decisionNote?.nonBlank)
+    }
+  }
+
+  private static func reason(_ text: String, limit: Int) throws -> String {
+    let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !words.isEmpty else { throw AppError.validation(["Give a reason."]) }
+    guard words.count <= limit else { throw AppError.validation(["The reason can be at most \(limit) characters."]) }
+    return words
+  }
+
   /// The relay group decides not to mail a queued or printed letter (API #170), a held one included, with no
   /// `release`. `rule` is the tag of one of that letter's facility's rules, and goes with `facilityRule` only.
   /// `note` is read by the writer and never encrypted, so it says why and quotes nothing. Final: it cannot be undone.

@@ -120,6 +120,7 @@ struct RouteView: View {
     case .handoff(let writerId, let writerName): HandoffView(app: app, writerId: writerId, writerName: writerName)
     case .groupKey: GroupKeyView(app: app)
     case .groupNumbers: GroupNumbersView(app: app)
+    case .blockedWriters: BlockedWritersView(app: app)
     case .inviteCodes: InviteCodesView(app: app)
     case .prisonerPhoto(let id, let name, let hasPhoto, let credit): PrisonerPhotoEditView(app: app, prisonerId: id, name: name, hasPhoto: hasPhoto, credit: credit)
     case .changePassword: ChangePasswordView(app: app)

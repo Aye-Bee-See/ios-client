@@ -91,3 +91,28 @@ public struct ThreadWriter: Equatable, Sendable {
 public func mayChangeLetters(viewerIsStaff: Bool, viewerGroupId: Int?, writer: ThreadWriter?) -> Bool {
   !viewerIsStaff || writer?.canBeWrittenFor(by: viewerGroupId) == true
 }
+
+/// A writer this group does not mail letters for (API #171). The writer was told the reason.
+public struct WriterBlock: Equatable, Identifiable, Sendable {
+  public let writerId: Int
+  /// The pen name, else the name; nil when the API sent neither.
+  public let writerName: String?
+  public let reason: String?
+  public let blockedBy: String?
+  public let blockedAt: Date?
+  public var id: Int { writerId }
+}
+
+/// What this group asked the superadmins about a writer (API #172), and what they decided. Only superadmins read
+/// the reason; the writer is never told of a recommendation.
+public struct BanRecommendation: Equatable, Identifiable, Sendable {
+  public enum Status: String, Sendable { case pending, banned, dismissed }
+  public let id: Int
+  public let writerId: Int?
+  public let writerName: String?
+  public let reason: String?
+  public let status: Status
+  public let recommendedAt: Date?
+  public let decidedAt: Date?
+  public let decisionNote: String?
+}

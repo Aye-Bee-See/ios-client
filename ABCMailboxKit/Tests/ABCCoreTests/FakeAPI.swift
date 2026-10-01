@@ -76,6 +76,9 @@ final class FakeAPI: @unchecked Sendable {
   var requirePenName = false
   static let penNameRequired = Stubbed.error(400, extra: ["errors": ["Choose a pen name: the name your letters are signed with, and the name a reply comes back to."], "problems": [["field": "penName", "code": "required"]]])
   private func lacksPenName(_ body: [String: Any]) -> Bool { requirePenName && ((body["penName"] as? String)?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) }
+  /// API #171: writers each group blocked, by group id → writer id → reason. #172: recommendations.
+  var blocks: [Int: [Int: String]] = [:]
+  var banRecommendations: [[String: Any]] = []
   static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
   /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
   var penNameLimits: [String: Any] = ["changeAllowedAt": NSNull(), "newNamesLeft": 2, "newNamesWindowEnds": NSNull(), "cooldownDays": 90, "newPerYear": 2]
@@ -606,6 +609,10 @@ final class FakeAPI: @unchecked Sendable {
 
     case ("POST", "/messaging/message"):
       guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      // API #171: a writer blocked by the group the letter goes to. The group may still write for its own writers.
+      if a.role == "user", let g = body["relayChapter"] as? Int, blocks[g]?[a.id] != nil {
+        return .error(403, info: "Test Chapter is not mailing letters from this account.", extra: ["name": "GroupBlockError", "code": "group_block"])
+      }
       for e in body["envelopes"] as? [[String: Any]] ?? [] where e["readerType"] as? String == "chapter" {
         if e["keyVersion"] as? Int != groupKeys[e["readerId"] as? Int ?? 0]?.version { return .error(409, info: "Error sending.", extra: ["name": "KeyVersionError", "error": "That group rotated its key."]) }
       }
@@ -774,6 +781,54 @@ final class FakeAPI: @unchecked Sendable {
         tellLocked(writer, "letter.status", chat: messages[i]["chat"] as? Int, message: messages[i]["id"] as? Int, detail: detail)
       }
       return .data(visible(messages[i], to: a))
+
+    case ("POST", "/chapter/block"):
+      guard let a = caller(r), a.role == "chapter", let g = a.chapterId else { return .error(403, info: "Group admins only; a superadmin bans instead.") }
+      guard let writer = body["user"] as? Int, let reason = (body["reason"] as? String)?.trimmingCharacters(in: .whitespaces), !reason.isEmpty else {
+        return .error(400, extra: ["errors": ["reason is required."], "problems": [["field": "reason", "code": "required"]]])
+      }
+      blocks[g, default: [:]][writer] = reason
+      var held = 0
+      for i in messages.indices where messages[i]["user"] as? Int == writer && messages[i]["relayChapter"] as? Int == g && messages[i]["status"] as? String == "queued" {
+        messages[i]["heldReason"] = "writer_blocked"; held += 1
+      }
+      tellLocked(writer, "writer.block", chat: nil, message: nil, detail: ["action": "blocked", "chapter": ["id": g, "name": "Test Chapter"], "reason": reason])
+      return .data(["chapter": g, "user": writer, "reason": reason, "held": held])
+
+    case ("DELETE", "/chapter/block"):
+      guard let a = caller(r), let g = a.chapterId, let writer = body["user"] as? Int, blocks[g]?[writer] != nil else { return .error(404, info: "No such block.") }
+      blocks[g]?[writer] = nil
+      var released = 0
+      for i in messages.indices where messages[i]["user"] as? Int == writer && messages[i]["heldReason"] as? String == "writer_blocked" {
+        messages[i]["heldReason"] = nil; released += 1
+      }
+      tellLocked(writer, "writer.block", chat: nil, message: nil, detail: ["action": "lifted", "chapter": ["id": g, "name": "Test Chapter"]])
+      return .data(["chapter": g, "user": writer, "released": released])
+
+    case ("GET", "/chapter/blocks"):
+      guard let a = caller(r), let g = a.chapterId else { return .error(403, info: "Group admins only.") }
+      let rows: [[String: Any]] = (blocks[g] ?? [:]).sorted { $0.key < $1.key }.map { writer, reason in
+        let w = accounts.first { $0.id == writer }
+        return ["writer": ["id": writer, "penName": w?.penName ?? NSNull(), "name": w?.name ?? NSNull()], "reason": reason, "blockedBy": ["id": a.id, "username": a.username, "name": a.name ?? NSNull()], "blockedAt": "2026-09-30T10:00:00.000Z"]
+      }
+      return .data(rows)
+
+    case ("POST", "/moderation/ban-recommendation"):
+      guard let a = caller(r), a.role == "chapter", let g = a.chapterId, let writer = body["user"] as? Int, let reason = body["reason"] as? String else { return .error(403, info: "Group admins only.") }
+      if banRecommendations.contains(where: { $0["chapter"] as? Int == g && $0["user"] as? Int == writer && $0["status"] as? String == "pending" }) {
+        return .error(409, info: "Error recommending.", extra: ["name": "BanRecommendationError", "condition": "pending"])
+      }
+      let row: [String: Any] = ["id": banRecommendations.count + 1, "chapter": g, "user": writer, "reason": reason, "status": "pending", "createdAt": "2026-09-30T10:00:00.000Z"]
+      banRecommendations.append(row)
+      return .json(["data": row, "success": true, "status": 201], status: 201)
+
+    case ("GET", "/moderation/ban-recommendations"):
+      guard let a = caller(r), let g = a.chapterId else { return .error(403, info: "Group admins only.") }
+      return .data(banRecommendations.filter { $0["chapter"] as? Int == g }.map { row in
+        var out = row
+        out["writer"] = ["id": row["user"] ?? 0, "penName": NSNull(), "name": accounts.first { $0.id == row["user"] as? Int }?.name ?? NSNull()]
+        return out
+      })
 
     case ("GET", "/messaging/envelopes/missing"):
       guard let a = caller(r), let g = a.chapterId, mode == "e2e" else { return .error(403, info: "Group members, end-to-end mode.") }

@@ -167,6 +167,7 @@ struct ThreadView: View {
         ForEach(thread.letters) { letter in
           LetterCard(
             letter: letter, busy: model.busyMessageId == letter.id, mayChange: mayChange,
+            blockNotice: letter.relayGroupId.flatMap { app.container.activity.blockNotice(groupId: $0) },
             onOpen: { a in Task { await model.open(a) } },
             onEdit: { app.push(.compose(ComposeRequest(prisonerId: thread.prisonerId, editMessageId: letter.id))) },
             onDelete: { confirmDelete = letter.id },
@@ -237,6 +238,8 @@ struct LetterCard: View {
   let letter: Letter
   let busy: Bool
   let mayChange: Bool
+  /// API #171: what the group said when it blocked this writer, if this phone was told. Shown only inside the app.
+  var blockNotice: GroupBlockNotice? = nil
   let onOpen: (Attachment) -> Void
   let onEdit: () -> Void
   let onDelete: () -> Void
@@ -343,6 +346,17 @@ struct LetterCard: View {
         if mayChange, !letter.locked, !letter.awaitingShare { Button("Send it again", action: onSendAgain).buttonStyle(.link).disabled(busy) }
       case .prisonerFree:
         Text("They have been released, so this letter is waiting: mailed to a prison they have left, it may never reach them. The group prints it only on purpose.\(mayChange ? " You can delete it, or leave it if you know it will be forwarded." : "")").font(Theme.bodyMedium).foregroundStyle(Theme.red)
+      case .writerBlocked:
+        if mayChange {
+          let group = blockNotice?.groupName ?? letter.relayGroupName ?? "The group that would mail it"
+          Text("\(group) is not mailing letters from your account any more, so this letter is waiting. Other groups are not affected. You can delete it.").font(Theme.bodyMedium).foregroundStyle(Theme.red)
+          if let reason = blockNotice?.reason {
+            FieldLabel("Why, in the words of \(group)")
+            Text(reason).font(Theme.bodyMedium).textSelection(.enabled)
+          }
+        } else {
+          Text("The group that would mail it blocked the writer, so it is waiting. That group prints it only on purpose.").font(Theme.bodyMedium).foregroundStyle(Theme.red)
+        }
       case .other:
         Text("This letter is being held and will not be printed for now.").font(Theme.bodyMedium).foregroundStyle(Theme.red)
       }

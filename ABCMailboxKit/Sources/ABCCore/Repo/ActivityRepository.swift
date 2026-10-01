@@ -40,7 +40,23 @@ public final class ActivityRepository {
   private func lastSeenKey(_ user: Int) -> String { "activity_last_seen_\(user)" }
 
   /// The account is gone: so is its place in a feed that no longer exists.
-  func forget(userId: Int) { defaults.removeObject(forKey: lastSeenKey(userId)) }
+  func forget(userId: Int) {
+    defaults.removeObject(forKey: lastSeenKey(userId))
+    defaults.removeObject(forKey: blockNoticesKey(userId))
+  }
+
+  // MARK: What a group said when it blocked this writer (API #171)
+
+  private func blockNoticesKey(_ user: Int) -> String { "group_block_notices_\(user)" }
+
+  private func blockNotices(_ user: Int) -> BlockNoticesBox { BlockNoticesBox(defaults: defaults, key: blockNoticesKey(user)) }
+
+  /// The group's name and its reason, as the writer was told, while the block stands. Nil when this phone was not
+  /// told (another device read the feed first): the letter is still said to be held, without the reason.
+  public func blockNotice(groupId: Int) -> GroupBlockNotice? {
+    guard let user = userId else { return nil }
+    return blockNotices(user)[groupId]
+  }
 
   /// Fetches what is new since this phone last looked. Quiet when signed out or offline: this is housekeeping.
   ///
@@ -68,7 +84,19 @@ public final class ActivityRepository {
       if case .number(let n)? = e.detail?["owner"] { owner = Int(n) }
       var paper = false
       if case .bool(let b)? = e.detail?["paper"] { paper = b }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user, paper: paper), chatId: e.chat, messageId: e.message, count: count)
+      var decision: String?
+      if case .string(let s)? = e.detail?["decision"] { decision = s }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user, paper: paper, decision: decision), chatId: e.chat, messageId: e.message, count: count)
+    }
+    // Which group blocked this writer, and why (API #171). The feed is the only place the API says so, and a feed
+    // sentence names nobody, so it is kept here for the app to say where only the writer sees it.
+    for e in entries.sorted(by: { $0.id < $1.id }) where e.event == "writer.block" {
+      guard case .object(let group)? = e.detail?["chapter"], case .number(let gid)? = group["id"] else { continue }
+      var name: String?, reason: String?, action: String?
+      if case .string(let s)? = group["name"] { name = s }
+      if case .string(let s)? = e.detail?["reason"] { reason = s }
+      if case .string(let s)? = e.detail?["action"] { action = s }
+      if action == "lifted" { blockNotices(user).removeValue(forKey: Int(gid)) } else { blockNotices(user)[Int(gid)] = GroupBlockNotice(groupName: name, reason: reason) }
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
     if fresh.contains(where: \.kind.concernsGroupKey) { await onGroupKeyChange?() }
@@ -85,4 +113,28 @@ public final class ActivityRepository {
       unread = envelope.data?.unread ?? 0
     }
   }
+}
+
+/// What a group said when it blocked the writer: shown beside a held letter and a refused one, never on a lock screen.
+public struct GroupBlockNotice: Codable, Equatable, Sendable {
+  public let groupName: String?
+  public let reason: String?
+}
+
+/// The writer's block notices in the app's defaults, keyed by group id. Small, and only what the writer was told.
+struct BlockNoticesBox {
+  let defaults: UserDefaults
+  let key: String
+
+  private var all: [Int: GroupBlockNotice] {
+    get { defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([Int: GroupBlockNotice].self, from: $0) } ?? [:] }
+    nonmutating set { if newValue.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(try? JSONEncoder().encode(newValue), forKey: key) } }
+  }
+
+  subscript(groupId: Int) -> GroupBlockNotice? {
+    get { all[groupId] }
+    nonmutating set { var current = all; current[groupId] = newValue; all = current }
+  }
+
+  func removeValue(forKey groupId: Int) { var current = all; current.removeValue(forKey: groupId); all = current }
 }
