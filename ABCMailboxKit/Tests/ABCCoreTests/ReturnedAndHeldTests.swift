@@ -78,7 +78,7 @@ final class ReturnedAndHeldTests: XCTestCase {
 
   func testOnlyAReturnedLetterOfOnesOwnCanBeSentAgain() async throws {
     let letter = try await mailed()
-    await assertThrowsAppError(try await writer.container.letters.send(NewLetter(prisonerId: 3, body: "Again", relayNote: nil, relayChapter: nil, resendOf: letter.id))) { XCTAssertEqual($0.userMessage, "resendOf must be one of this writer's returned letters to the same prisoner.") }
+    await assertThrowsAppError(try await writer.container.letters.send(NewLetter(prisonerId: 3, body: "Again", relayNote: nil, relayChapter: nil, resendOf: letter.id))) { XCTAssertEqual($0.userMessage, "resendOf must be one of this writer's returned or declined letters to the same prisoner.") }
     XCTAssertFalse(letter.canSendAgain)
   }
 

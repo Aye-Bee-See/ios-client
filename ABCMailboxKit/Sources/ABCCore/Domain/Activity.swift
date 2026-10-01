@@ -8,6 +8,8 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case reply, printed, mailed, queuedForGroup, changeApproved, changeRejected
     /// The post brought a letter back (API PR #105). Why is inside the app, not on the lock screen.
     case returned
+    /// The relay group decided not to mail a letter (API #170). Why is inside the app.
+    case declined
     /// Someone this account writes to was moved, or freed (API PR #106). `held`: how many of this writer's
     /// queued letters to them are waiting for the writer now.
     case moved(held: Int)
@@ -45,6 +47,7 @@ public struct Activity: Equatable, Identifiable, Sendable {
       case .printed: return "\(count) of your letters have been printed."
       case .mailed: return "\(count) of your letters are in the mail."
       case .returned: return "\(count) of your letters came back in the mail."
+      case .declined: return "Your group decided not to send \(count) of your letters."
       default: break
       }
     }
@@ -53,6 +56,7 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case .printed: return "One of your letters has been printed."
     case .mailed: return "One of your letters is in the mail."
     case .returned: return "One of your letters came back in the mail."
+    case .declined: return "Your group decided not to send one of your letters."
     case .moved(let held): return "Someone you write to was moved to another facility." + Self.waiting(held)
     case .freed(let held): return "Someone you write to has been released." + Self.waiting(held)
     case .groupKeySet: return "Your group now has an encryption key."
@@ -98,6 +102,7 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case ("letter.status", "printed"): return .printed
     case ("letter.status", "mailed"): return .mailed
     case ("letter.status", "returned"): return .returned
+    case ("letter.status", "declined"): return .declined
     case ("prisoner.moved", _): return .moved(held: held)
     // The API sends this when someone becomes free. Any other status it may one day report is just news.
     case ("prisoner.status", "free"): return .freed(held: held)

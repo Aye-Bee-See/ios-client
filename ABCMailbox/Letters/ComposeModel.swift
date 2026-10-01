@@ -64,7 +64,7 @@ final class ComposeModel {
   private var usesDrafts: Bool { !editing && request.writerId == nil && !recordingReply && request.outboxId == nil && copiedFromId == nil && !isStaff }
   /// Said above the editor, so that nobody wonders why a new letter is already written.
   var startedFrom: String? {
-    if request.resendOf != nil { return "This is the letter that came back. Check where they are now and what the mail room objected to, change what you need to, and send it again." }
+    if request.resendOf != nil { return "This is the letter that was not mailed or came back. Check what the group or the mail room objected to, change what you need to, and send it again." }
     if request.replaceHeldId != nil { return "This is the letter that was waiting. Sending it seals it to the group that mails to the new facility, and removes the waiting copy." }
     return nil
   }
