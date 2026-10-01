@@ -799,7 +799,8 @@ final class FakeAPI: @unchecked Sendable {
       guard let a = caller(r), let g = a.chapterId, let writer = body["user"] as? Int, blocks[g]?[writer] != nil else { return .error(404, info: "No such block.") }
       blocks[g]?[writer] = nil
       var released = 0
-      for i in messages.indices where messages[i]["user"] as? Int == writer && messages[i]["heldReason"] as? String == "writer_blocked" {
+      // Only this group's holds: another group's block on the same writer stands (API #171).
+      for i in messages.indices where messages[i]["user"] as? Int == writer && messages[i]["relayChapter"] as? Int == g && messages[i]["heldReason"] as? String == "writer_blocked" {
         messages[i]["heldReason"] = nil; released += 1
       }
       tellLocked(writer, "writer.block", chat: nil, message: nil, detail: ["action": "lifted", "chapter": ["id": g, "name": "Test Chapter"]])

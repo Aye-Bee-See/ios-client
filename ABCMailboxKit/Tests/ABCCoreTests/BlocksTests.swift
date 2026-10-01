@@ -79,4 +79,27 @@ final class BlocksTests: XCTestCase {
     XCTAssertEqual(Activity.kind(event: "ban.recommended", status: nil), .banRecommended)
     XCTAssertEqual(HeldReason.from(key: "writer_blocked"), .writerBlocked)
   }
+
+  /// Another server can reuse the same account and group ids: one server's block notice is never shown on another.
+  func testABlockNoticeBelongsToTheServerThatSentIt() async throws {
+    _ = try await group.block(writerId: 4, reason: "Spam.")
+    _ = await writer.container.activity.sync()
+    XCTAssertNotNil(writer.container.activity.blockNotice(groupId: 1))
+    _ = try await writer.container.devServer.set("http://192.168.1.20:3000")
+    try await writer.container.sessions.login(username: "user1", password: "password1")
+    XCTAssertNil(writer.container.activity.blockNotice(groupId: 1), "the development server's group 1 is someone else")
+  }
+
+  /// Lifting one group's block leaves another group's hold on the same writer alone (API #171).
+  func testUnblockingReleasesOnlyThisGroupsHolds() async throws {
+    let mine = try await writer.container.letters.send(NewLetter(prisonerId: 3, body: "To group 1", relayNote: nil, relayChapter: 1)).id
+    let theirs = try await writer.container.letters.send(NewLetter(prisonerId: 3, body: "To group 2", relayNote: nil, relayChapter: 2)).id
+    _ = try await group.block(writerId: 4, reason: "Spam.")
+    fake.blocks[2] = [4: "Their reason."]
+    if let i = fake.messages.firstIndex(where: { $0["id"] as? Int == theirs }) { fake.messages[i]["heldReason"] = "writer_blocked" }
+    let released = try await group.unblock(writerId: 4)
+    XCTAssertEqual(released, 1)
+    let mineAfter = try await writer.container.letters.letter(messageId: mine), theirsAfter = try await writer.container.letters.letter(messageId: theirs)
+    XCTAssertFalse(mineAfter.isHeld); XCTAssertEqual(theirsAfter.heldReason, .writerBlocked)
+  }
 }

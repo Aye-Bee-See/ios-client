@@ -66,7 +66,7 @@ public final class AppContainer {
     let cipher = SecretCipher(store: secrets)
     drafts = draftsDirectory.map { DraftsRepository(cipher: cipher, directory: $0) } ?? DraftsRepository(cipher: cipher)
     outbox = OutboxRepository(directory: outboxDirectory, cipher: cipher, files: files, letters: letters, sessions: sessions)
-    activity = ActivityRepository(api: api, sessions: sessions, defaults: defaults)
+    activity = ActivityRepository(api: api, sessions: sessions, defaults: defaults, server: holder)
     // A copy of the group key handed or withdrawn, or the owner changed: the loaded key follows, from any fetch of the feed.
     activity.onGroupKeyChange = { [groupRepo] in await groupRepo.refreshKeyState() }
     accountDeletion = AccountDeletion(sessions: sessions, modes: modes, letters: letters, group: group, drafts: drafts, outbox: outbox, activity: activity)

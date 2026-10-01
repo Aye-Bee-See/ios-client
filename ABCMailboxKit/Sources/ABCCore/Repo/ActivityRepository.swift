@@ -25,10 +25,14 @@ public final class ActivityRepository {
   /// background included: the cursor moves on with each fetch, so the reload has to happen where the fetch does.
   @ObservationIgnored var onGroupKeyChange: (@MainActor () async -> Void)?
 
-  init(api: APIClient, sessions: SessionRepository, defaults: UserDefaults) {
+  /// The server in force, so what one server said is never shown against another's ids (see `blockNoticesKey`).
+  @ObservationIgnored private let server: DevServerURL?
+
+  init(api: APIClient, sessions: SessionRepository, defaults: UserDefaults, server: DevServerURL? = nil) {
     self.api = api
     self.sessions = sessions
     self.defaults = defaults
+    self.server = server
     sessions.onSignedOut.append { [weak self] in
       self?.unread = 0
       self?.notifier?.clear()
@@ -47,7 +51,13 @@ public final class ActivityRepository {
 
   // MARK: What a group said when it blocked this writer (API #171)
 
-  private func blockNoticesKey(_ user: Int) -> String { "group_block_notices_\(user)" }
+  /// Per account and per server: changing the developer server signs out but keeps the defaults, and another server
+  /// may reuse the same account and group ids. The built-in server keeps the bare key, as `SchemeMemory` does.
+  private func blockNoticesKey(_ user: Int) -> String {
+    guard let server, server.current() != server.defaultURL else { return "group_block_notices_\(user)" }
+    let address = server.current().absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    return "group_block_notices_\(address)|\(user)"
+  }
 
   private func blockNotices(_ user: Int) -> BlockNoticesBox { BlockNoticesBox(defaults: defaults, key: blockNoticesKey(user)) }
 

@@ -24,6 +24,8 @@ struct ReasonSheet: View {
         Muted(text, font: Theme.bodyLarge)
         SectionTitle("Reason")
         TextField("", text: $reason, axis: .vertical).lineLimit(3...8).font(Theme.bodyLarge)
+          .accessibilityLabel("Reason")
+          .accessibilityHint(help)
           .padding(10).background(Theme.paperRaised, in: RoundedRectangle(cornerRadius: 4))
         Text("\(length) of \(limit). \(help)").font(Theme.label).foregroundStyle(length > limit ? Theme.red : Theme.inkMuted)
         Button(saving ? "Saving…" : confirm) {
