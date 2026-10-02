@@ -128,6 +128,8 @@ public enum HeldReason: String, Sendable {
   /// Moved, end-to-end mode: sealed to a group that does not serve the new facility. Only the writer's device can seal it again.
   case resealNeeded = "reseal_needed"
   case prisonerFree = "prisoner_free"
+  /// The relay group blocked the writer (API #171): it prints it only on purpose, with `release`.
+  case writerBlocked = "writer_blocked"
   /// A reason this version has never heard of. The letter is held all the same.
   case other = ""
 

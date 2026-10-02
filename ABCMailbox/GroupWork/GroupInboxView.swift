@@ -225,6 +225,7 @@ private struct QueueRow: View {
     case .prisonerFree: return "they have been released"
     case .chooseRelay: return "moved; the writer has to choose who mails it"
     case .resealNeeded: return "moved; the writer has to send it again"
+    case .writerBlocked: return "your group blocked this writer"
     default: return "open it to see why"
     }
   }

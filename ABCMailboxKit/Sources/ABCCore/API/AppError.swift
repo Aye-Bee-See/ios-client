@@ -36,6 +36,9 @@ public enum AppError: Error, Equatable, Sendable {
   /// the clear to an end-to-end server or the other way round. `LettersRepository.send` asks `/health` again and
   /// retries once when the server's mode has changed; what reaches a screen means this build cannot write to it.
   case wrongEncryptionMode
+  /// `403 group_block` (API #171): the group that would mail this letter has blocked the writer. The letter was not
+  /// sent; another relay group of the facility, if there is one, still takes it.
+  case groupBlock(String?)
 
   /// The sentence to show a person, when one exists.
   public var userMessage: String? {
@@ -50,6 +53,8 @@ public enum AppError: Error, Equatable, Sendable {
       return "Too many attempts. Try again later."
     case .server(_, let info): return info
     case .network, .unreadable, .unexpected: return nil
+    // The API's sentence names its own field ("choose it as relayChapter"): the app says it in its own words.
+    case .groupBlock: return "The group that mails to this facility is not mailing letters from your account."
     case .wrongEncryptionMode: return "This version of the app cannot send letters to this server, which protects them in a way the app does not know. Update the app, then send the letter again."
     }
   }

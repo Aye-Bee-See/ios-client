@@ -35,6 +35,39 @@ final class LetterWorkModel {
     }
   }
 
+  /// Blocks the letter's writer from this group (API #171). The writer is told the reason.
+  func blockWriter(reason: String) async -> Bool {
+    guard let writerId = item.value?.letter.writerId else { return false }
+    busy = true
+    defer { busy = false }
+    do {
+      let held = try await app.container.group.block(writerId: writerId, reason: reason)
+      await load()
+      app.show("Blocked. The writer has been told; \(held) of their letters here \(held == 1 ? "is" : "are") now held.")
+      return true
+    } catch {
+      app.show(AppError.from(error).userMessage ?? "The writer could not be blocked.")
+      return false
+    }
+  }
+
+  /// Asks the superadmins to block the writer everywhere (API #172). The writer is not told.
+  func recommendBan(reason: String) async -> Bool {
+    guard let writerId = item.value?.letter.writerId else { return false }
+    busy = true
+    defer { busy = false }
+    do {
+      try await app.container.group.recommendBan(writerId: writerId, reason: reason)
+      app.show("Recommended. A superadmin will decide; the writer is not told.")
+      return true
+    } catch {
+      let e = AppError.from(error)
+      if e.conflictCondition == "pending" { app.show("Your group already recommended this, and it is waiting for a superadmin."); return true }
+      app.show(e.userMessage ?? "The recommendation could not be sent.")
+      return false
+    }
+  }
+
   /// The group decides not to mail it (API #170). The writer is told why, and can send it again.
   func decline(reason: DeclineReason, rule: String?, note: String) async -> Bool {
     guard var current = item.value else { return false }
@@ -130,6 +163,8 @@ struct LetterWorkView: View {
   @State private var confirmRelease = false
   @State private var recordReturn = false
   @State private var decline = false
+  @State private var blockWriter = false
+  @State private var recommendBan = false
   @State private var choosePartner = false
   private let app: AppModel
 
@@ -155,6 +190,20 @@ struct LetterWorkView: View {
         Button("Leave it waiting", role: .cancel) {}
       } message: {
         Text("This lifts the hold. Do it only if your group knows the letter will reach them where it is going.")
+      }
+      .sheet(isPresented: $blockWriter) {
+        ReasonSheet(
+          title: "Block this writer from your group",
+          text: "Your group will not mail their letters any more. Their letters waiting here are held, and they cannot send you new ones. Other groups are not affected. The writer is told, with the reason below, and so is everyone who runs your group. You can lift it later.",
+          help: "Required. The writer reads this.", limit: GroupRepository.blockReasonLimit, confirm: "Block"
+        ) { reason in await model.blockWriter(reason: reason) }
+      }
+      .sheet(isPresented: $recommendBan) {
+        ReasonSheet(
+          title: "Recommend blocking this writer everywhere",
+          text: "A superadmin decides whether to block the account on the whole site. Only superadmins read the reason; the writer is not told of a recommendation. Your group sees what was decided.",
+          help: "Required. Only superadmins read this.", limit: GroupRepository.recommendationReasonLimit, confirm: "Recommend"
+        ) { reason in await model.recommendBan(reason: reason) }
       }
       .sheet(isPresented: $decline) {
         DeclineSheet(count: 1, rules: model.item.value?.prisoner?.facility?.rules.rules ?? []) { reason, rule, note in
@@ -226,6 +275,11 @@ struct LetterWorkView: View {
       if letter.canBeDeclined, app.user?.role == Role.chapter {
         Button("Don't send…") { decline = true }.buttonStyle(.destructiveLink).accessibilityIdentifier("decline")
       }
+      // API #171, #172: about the writer, not this letter. Group admins only; a superadmin bans instead.
+      if letter.writerId != nil, !letter.fromPrisoner, app.user?.role == Role.chapter {
+        Button("Block this writer from our group…") { blockWriter = true }.buttonStyle(.destructiveLink).accessibilityIdentifier("block-writer")
+        Button("Recommend a site-wide block…") { recommendBan = true }.buttonStyle(.destructiveLink).accessibilityIdentifier("recommend-ban")
+      }
       // End-to-end only, and only where the facility has another relay group: the server permits no other readers.
       if !model.partners.isEmpty, !letter.locked, letter.status != .mailed, letter.status != .returned, letter.status != .declined {
         Button("Share with a partner group") { choosePartner = true }.buttonStyle(.outlineWide)
@@ -240,6 +294,7 @@ struct LetterWorkView: View {
     switch reason {
     case .prisonerFree: return "Held: they have been released since this was written. Mailed to a prison they have left, it may never reach them. Print it only if your group knows it will."
     case .chooseRelay: return "Held: they were moved, and the writer has not yet chosen who mails this letter."
+    case .writerBlocked: return "Held: your group blocked this writer, so it will not go out by accident. Don't send it, or print it anyway if your group means to."
     case .resealNeeded: return "Held: they were moved to a facility your group does not mail to. The writer has been asked to send it again, to the group that does."
     case .other: return "Held: something changed for this person after the letter was written. Check their page before printing it."
     }

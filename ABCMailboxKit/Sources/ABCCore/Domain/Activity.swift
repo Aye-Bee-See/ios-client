@@ -24,6 +24,14 @@ public struct Activity: Equatable, Identifiable, Sendable {
     case groupWaiting
     /// API PR #118: a paper letter for the group's next batch. Nothing to print.
     case paperForGroup
+    /// API #171: a group will not mail this writer's letters any more, or will again. Which group, and why, is
+    /// inside the app only: never on a lock screen.
+    case writerBlocked, writerUnblocked
+    /// API #171, to the group's own admins: a writer blocked or the block lifted.
+    case groupBlock(lifted: Bool)
+    /// API #172: to superadmins, a group recommends a site-wide block; to the group, what a superadmin decided.
+    case banRecommended
+    case banDecided(banned: Bool)
 
     /// The loaded group key may have changed hands or owners: the phone reloads it, so a copy handed or withdrawn takes effect without a sign-out.
     public var concernsGroupKey: Bool {
@@ -52,6 +60,13 @@ public struct Activity: Equatable, Identifiable, Sendable {
       }
     }
     switch kind {
+    case .writerBlocked: return "A group will not mail your letters any more. Open the app to see which, and why."
+    case .writerUnblocked: return "A group will mail your letters again."
+    case .groupBlock(false): return "Your group blocked a writer from its letters."
+    case .groupBlock(true): return "Your group lifted a block on a writer."
+    case .banRecommended: return "A group recommends blocking a writer everywhere."
+    case .banDecided(true): return "A writer your group recommended blocking has been blocked everywhere."
+    case .banDecided(false): return "A superadmin decided not to block a writer your group recommended."
     case .reply: return "A reply to one of your letters has arrived."
     case .printed: return "One of your letters has been printed."
     case .mailed: return "One of your letters is in the mail."
@@ -85,7 +100,7 @@ public struct Activity: Equatable, Identifiable, Sendable {
   }
 
   /// `me` is the signed-in account, so that a key handed to it, or the role given to it, reads as "you".
-  static func kind(event: String, status: String?, held: Int = 0, action: String? = nil, member: Int? = nil, owner: Int? = nil, me: Int? = nil, paper: Bool = false) -> Kind {
+  static func kind(event: String, status: String?, held: Int = 0, action: String? = nil, member: Int? = nil, owner: Int? = nil, me: Int? = nil, paper: Bool = false, decision: String? = nil) -> Kind {
     switch (event, status) {
     case ("letter.queued", _) where paper: return .paperForGroup
     case ("group.key", _):
@@ -97,6 +112,10 @@ public struct Activity: Equatable, Identifiable, Sendable {
       default: return .other
       }
     case ("group.owner", _): return .groupOwner(me: me != nil && owner == me)
+    case ("writer.block", _): return action == "lifted" ? .writerUnblocked : .writerBlocked
+    case ("group.block", _): return .groupBlock(lifted: action == "lifted")
+    case ("ban.recommended", _): return .banRecommended
+    case ("ban.decided", _): return .banDecided(banned: decision == "banned")
     case ("group.waiting", _): return .groupWaiting
     case ("letter.reply", _): return .reply
     case ("letter.status", "printed"): return .printed

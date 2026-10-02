@@ -196,3 +196,39 @@ struct MissingEnvelopeDTO: Decodable {
   let publicKey: String?
   let wrappedKey: String?
 }
+
+// MARK: Blocking a writer (API #171) and recommending a site-wide block (API #172)
+
+struct BlockRequest: Encodable {
+  let user: Int
+  var reason: String?
+}
+
+struct BlockedDTO: Decodable {
+  let held: Int?
+  let released: Int?
+}
+
+struct BlockRowDTO: Decodable {
+  struct Person: Decodable { let id: Int?; let penName: String?; let name: String?; let username: String? }
+  let writer: Person?
+  let reason: String?
+  let blockedBy: Person?
+  let blockedAt: String?
+}
+
+struct BanRecommendationRequest: Encodable {
+  let user: Int
+  let reason: String
+}
+
+struct BanRecommendationDTO: Decodable {
+  struct Person: Decodable { let id: Int?; let penName: String?; let name: String?; let username: String? }
+  let id: Int
+  let writer: Person?
+  let reason: String?
+  let status: String?
+  let createdAt: String?
+  let decidedAt: String?
+  let decisionNote: String?
+}

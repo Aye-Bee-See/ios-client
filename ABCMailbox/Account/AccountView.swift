@@ -97,7 +97,10 @@ struct AccountView: View {
     // A writer's pen name: what the letters are signed with, and what a prisoner writes back to.
     if user.role == Role.user { Button("Pen name") { app.push(.penName) }.buttonStyle(.link) }
     // For members of a group: the group's public numbers, and the one of them that a person types.
-    if user.role == Role.chapter, user.chapterId != nil { Button("Your group's numbers") { app.push(.groupNumbers) }.buttonStyle(.link) }
+    if user.role == Role.chapter, user.chapterId != nil {
+      Button("Your group's numbers") { app.push(.groupNumbers) }.buttonStyle(.link)
+      Button("Blocked writers") { app.push(.blockedWriters) }.buttonStyle(.link)
+    }
     Button("Change password") { app.push(.changePassword) }.buttonStyle(.link)
     Button("Sign out") { Task { await model.signOut(everywhere: false) } }.buttonStyle(.outlineWide).disabled(model.signingOut)
     Button("Sign out on every device") { Task { await model.signOut(everywhere: true) } }.buttonStyle(.link).disabled(model.signingOut)

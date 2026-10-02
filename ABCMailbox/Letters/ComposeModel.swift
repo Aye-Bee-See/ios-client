@@ -269,7 +269,24 @@ final class ComposeModel {
       }
     } catch {
       sending = false; progress = nil
+      if case .groupBlock = AppError.from(error) { groupBlocked(relayChapter: relayChapter); return }
       self.error = AppError.from(error).userMessage ?? (editing ? "Could not save the letter." : "Could not send the letter.")
+    }
+  }
+
+  /// The group that would mail it blocked this writer (API #171). Nothing was sent and the letter is still here. If
+  /// another group mails to this facility, it is offered in the blocked one's place; if not, the letter cannot go.
+  private func groupBlocked(relayChapter: Int?) {
+    let all = facility?.relayGroups.filter(\.isActive) ?? []
+    let blockedId: Int? = relayChapter ?? (all.count == 1 ? all.first?.id : nil)
+    let name = blockedId.flatMap { id in all.first { $0.id == id }?.name } ?? "The group that mails to this facility"
+    let others = all.filter { $0.id != blockedId }
+    if others.isEmpty {
+      error = "\(name) is not mailing letters from your account, and no other group mails to this facility, so this letter cannot go for now. It is still here; nothing was sent."
+    } else {
+      relay = .choose(options: others, required: true)
+      selectedRelay = nil
+      error = "\(name) is not mailing letters from your account. Another group mails to this facility: choose it below, then send."
     }
   }
 

@@ -25,10 +25,14 @@ public final class ActivityRepository {
   /// background included: the cursor moves on with each fetch, so the reload has to happen where the fetch does.
   @ObservationIgnored var onGroupKeyChange: (@MainActor () async -> Void)?
 
-  init(api: APIClient, sessions: SessionRepository, defaults: UserDefaults) {
+  /// The server in force, so what one server said is never shown against another's ids (see `blockNoticesKey`).
+  @ObservationIgnored private let server: DevServerURL?
+
+  init(api: APIClient, sessions: SessionRepository, defaults: UserDefaults, server: DevServerURL? = nil) {
     self.api = api
     self.sessions = sessions
     self.defaults = defaults
+    self.server = server
     sessions.onSignedOut.append { [weak self] in
       self?.unread = 0
       self?.notifier?.clear()
@@ -40,7 +44,29 @@ public final class ActivityRepository {
   private func lastSeenKey(_ user: Int) -> String { "activity_last_seen_\(user)" }
 
   /// The account is gone: so is its place in a feed that no longer exists.
-  func forget(userId: Int) { defaults.removeObject(forKey: lastSeenKey(userId)) }
+  func forget(userId: Int) {
+    defaults.removeObject(forKey: lastSeenKey(userId))
+    defaults.removeObject(forKey: blockNoticesKey(userId))
+  }
+
+  // MARK: What a group said when it blocked this writer (API #171)
+
+  /// Per account and per server: changing the developer server signs out but keeps the defaults, and another server
+  /// may reuse the same account and group ids. The built-in server keeps the bare key, as `SchemeMemory` does.
+  private func blockNoticesKey(_ user: Int) -> String {
+    guard let server, server.current() != server.defaultURL else { return "group_block_notices_\(user)" }
+    let address = server.current().absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    return "group_block_notices_\(address)|\(user)"
+  }
+
+  private func blockNotices(_ user: Int) -> BlockNoticesBox { BlockNoticesBox(defaults: defaults, key: blockNoticesKey(user)) }
+
+  /// The group's name and its reason, as the writer was told, while the block stands. Nil when this phone was not
+  /// told (another device read the feed first): the letter is still said to be held, without the reason.
+  public func blockNotice(groupId: Int) -> GroupBlockNotice? {
+    guard let user = userId else { return nil }
+    return blockNotices(user)[groupId]
+  }
 
   /// Fetches what is new since this phone last looked. Quiet when signed out or offline: this is housekeeping.
   ///
@@ -68,7 +94,19 @@ public final class ActivityRepository {
       if case .number(let n)? = e.detail?["owner"] { owner = Int(n) }
       var paper = false
       if case .bool(let b)? = e.detail?["paper"] { paper = b }
-      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user, paper: paper), chatId: e.chat, messageId: e.message, count: count)
+      var decision: String?
+      if case .string(let s)? = e.detail?["decision"] { decision = s }
+      return Activity(id: e.id, kind: Activity.kind(event: e.event, status: status, held: held, action: action, member: member, owner: owner, me: user, paper: paper, decision: decision), chatId: e.chat, messageId: e.message, count: count)
+    }
+    // Which group blocked this writer, and why (API #171). The feed is the only place the API says so, and a feed
+    // sentence names nobody, so it is kept here for the app to say where only the writer sees it.
+    for e in entries.sorted(by: { $0.id < $1.id }) where e.event == "writer.block" {
+      guard case .object(let group)? = e.detail?["chapter"], case .number(let gid)? = group["id"] else { continue }
+      var name: String?, reason: String?, action: String?
+      if case .string(let s)? = group["name"] { name = s }
+      if case .string(let s)? = e.detail?["reason"] { reason = s }
+      if case .string(let s)? = e.detail?["action"] { action = s }
+      if action == "lifted" { blockNotices(user).removeValue(forKey: Int(gid)) } else { blockNotices(user)[Int(gid)] = GroupBlockNotice(groupName: name, reason: reason) }
     }
     if let newest = entries.map(\.id).max() { defaults.set(newest, forKey: lastSeenKey(user)) }
     if fresh.contains(where: \.kind.concernsGroupKey) { await onGroupKeyChange?() }
@@ -85,4 +123,28 @@ public final class ActivityRepository {
       unread = envelope.data?.unread ?? 0
     }
   }
+}
+
+/// What a group said when it blocked the writer: shown beside a held letter and a refused one, never on a lock screen.
+public struct GroupBlockNotice: Codable, Equatable, Sendable {
+  public let groupName: String?
+  public let reason: String?
+}
+
+/// The writer's block notices in the app's defaults, keyed by group id. Small, and only what the writer was told.
+struct BlockNoticesBox {
+  let defaults: UserDefaults
+  let key: String
+
+  private var all: [Int: GroupBlockNotice] {
+    get { defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([Int: GroupBlockNotice].self, from: $0) } ?? [:] }
+    nonmutating set { if newValue.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(try? JSONEncoder().encode(newValue), forKey: key) } }
+  }
+
+  subscript(groupId: Int) -> GroupBlockNotice? {
+    get { all[groupId] }
+    nonmutating set { var current = all; current[groupId] = newValue; all = current }
+  }
+
+  func removeValue(forKey groupId: Int) { var current = all; current.removeValue(forKey: groupId); all = current }
 }

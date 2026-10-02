@@ -27,6 +27,8 @@ enum Route: Hashable {
   case groupKey
   /// What the directory says about how much mail the group handles, and the one number of it that a person types.
   case groupNumbers
+  /// API #171, #172: the writers this group blocked, and its site-wide block recommendations.
+  case blockedWriters
   /// Invite codes (API PR #116): print slips, see the quota, cancel unused codes.
   case inviteCodes
   /// Staff: add, replace or take down a prisoner's photo (API #166).
