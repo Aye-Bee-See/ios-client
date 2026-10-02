@@ -38,7 +38,9 @@ final class TwoFactorSetupModel {
       setup = try await app.container.twoFactor.setup()
       code = ""
     } catch {
-      self.error = Self.message(.from(error))
+      let e = AppError.from(error)
+      // Switched on meanwhile, from another device: nothing to set up.
+      if e.conflictCondition == "enabled" { onCodes([]) } else { self.error = Self.message(e) }
     }
   }
 
@@ -54,7 +56,6 @@ final class TwoFactorSetupModel {
       let e = AppError.from(error)
       if e.conflictCondition == "enabled" {
         // Switched on meanwhile, from another device: nothing to confirm, and its codes were shown there.
-        app.sessions.twoFactorSetUp()
         onCodes([])
       } else if case .validation = e {
         self.error = "That code is not right. Check the app shows this account, and type the code it shows now."
@@ -178,7 +179,12 @@ final class TwoFactorRequiredModel {
     setup = TwoFactorSetupModel(app: app) { [weak self] codes in self?.codes = codes }
   }
 
-  func load() async { because = (try? await app.container.twoFactor.status())?.requiredBecause ?? [] }
+  func load() async {
+    guard let status = try? await app.container.twoFactor.status() else { return }
+    because = status.requiredBecause
+    // Set up meanwhile on another device, or no longer required: the server refuses nothing now, so neither does the app.
+    if codes == nil, status.enabled || !status.required { await app.sessions.twoFactorSetUp() }
+  }
 
   func signOut() async {
     signingOut = true
@@ -202,9 +208,9 @@ struct TwoFactorRequiredView: View {
       if let codes = model.codes {
         if codes.isEmpty {
           Text("Two-factor sign-in is on already.").font(Theme.bodyLarge)
-          Button("Continue") { app.sessions.twoFactorSetUp() }.buttonStyle(.primary)
+          Button("Continue") { Task { await app.sessions.twoFactorSetUp() } }.buttonStyle(.primary)
         } else {
-          TwoFactorRecoveryCodesView(codes: codes) { app.sessions.twoFactorSetUp() }
+          TwoFactorRecoveryCodesView(codes: codes) { Task { await app.sessions.twoFactorSetUp() } }
         }
       } else {
         AlertBanner("\(TwoFactorCode.requiredBy(model.because)) requires two-factor sign-in. Set it up to go on; nothing else works until you do.")
@@ -245,6 +251,8 @@ final class TwoFactorSettingsModel {
 
   func load() async {
     status = await .from { try await app.container.twoFactor.status() }
+    // On, or not required: a set-up screen still up from earlier (on another device, or a requirement lifted) goes.
+    if codes == nil, let s = status.value, s.enabled || !s.required, app.sessions.twoFactorSetupRequired { await app.sessions.twoFactorSetUp() }
   }
 
   private func madeCodes(_ codes: [String]) {
@@ -253,7 +261,7 @@ final class TwoFactorSettingsModel {
 
   func codesSaved() async {
     codes = nil
-    app.sessions.twoFactorSetUp()
+    await app.sessions.twoFactorSetUp()
     setup = TwoFactorSetupModel(app: app) { [weak self] codes in self?.madeCodes(codes) }
     await load()
   }

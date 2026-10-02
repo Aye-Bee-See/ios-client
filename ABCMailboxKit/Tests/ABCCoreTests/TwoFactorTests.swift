@@ -121,7 +121,7 @@ final class TwoFactorTests: XCTestCase {
     XCTAssertTrue(sessions.twoFactorSetupRequired, "the set-up screen stays until the recovery codes are saved")
     let left = try await twoFactor.status()
     XCTAssertEqual(left.recoveryCodesLeft, 10, "and nothing else is refused meanwhile")
-    sessions.twoFactorSetUp()
+    await sessions.twoFactorSetUp()
     XCTAssertFalse(sessions.twoFactorSetupRequired)
     await assertThrowsAppError(try await twoFactor.disable(recoveryCode: "x")) { XCTAssertEqual($0.conflictCondition, "required") }
   }
@@ -162,5 +162,48 @@ final class TwoFactorTests: XCTestCase {
     XCTAssertTrue(TwoFactorCode.isRecoveryCodeShaped("abcde-12345")); XCTAssertFalse(TwoFactorCode.isRecoveryCodeShaped("abcde"))
     XCTAssertEqual(TwoFactorCode.requiredBy(["superadmins"]), "The site, for every superadmin,")
     XCTAssertEqual(TwoFactorCode.requiredBy(["all_groups", "group"]), "Your group")
+  }
+
+  func testKeysThatNeedTheServerWaitForARequiredSetUpAndAreMadeAfterIt() async throws {
+    // A fresh account on an end-to-end server: no keys yet, and making them is a request the server refuses until set-up.
+    fake.twoFactorRequired[4] = ["group"]
+    try await sessions.login(username: "user1", password: password)
+    XCTAssertTrue(sessions.twoFactorSetupRequired)
+    XCTAssertEqual(app.requests(to: "/auth/keys", method: "PUT").count, 0, "not tried while it would be refused")
+    XCTAssertTrue(sessions.keysLocked)
+    _ = try await twoFactor.setup()
+    _ = try await twoFactor.confirm(code: "123456")
+    await sessions.twoFactorSetUp()
+    XCTAssertEqual(app.requests(to: "/auth/keys", method: "PUT").count, 1)
+    XCTAssertFalse(sessions.keysLocked, "made with the password from the sign-in")
+    XCTAssertNotNil(sessions.pendingRecoveryCode)
+  }
+
+  func testKeysAlreadyInTheSignInAnswerOpenEvenBeforeARequiredSetUp() async throws {
+    try await sessions.login(username: "user1", password: password) // makes the keys
+    sessions.recoveryCodeSaved()
+    try await sessions.logout()
+    app.container.vault.clear()
+    fake.twoFactorRequired[4] = ["all_groups"]
+    try await sessions.login(username: "user1", password: password)
+    XCTAssertTrue(sessions.twoFactorSetupRequired)
+    XCTAssertFalse(sessions.keysLocked, "the bundle came with the answer; opening it needs no request")
+  }
+
+  func testAConfirmationWithoutRecoveryCodesIsNotASuccess() async throws {
+    try await sessions.login(username: "user1", password: password)
+    _ = try await twoFactor.setup()
+    fake.intercept = { $0.path == "/auth/two-factor/confirm" ? .data(["enabled": true, "recoveryCodes": []]) : nil }
+    await assertThrowsAppError(try await twoFactor.confirm(code: "123456")) {
+      if case .unexpected = $0 {} else { XCTFail("\($0)") }
+    }
+  }
+
+  func testARecoveryCodeIsReadAsTheServerReadsIt() async throws {
+    _ = try await accountWithTwoFactorOn()
+    fake.twoFactor[4]?.recoveryCodes = ["10ABC-DEF01"]
+    await assertThrowsAppError(try await sessions.login(username: "user1", password: password)) { XCTAssertEqual($0, .twoFactorCodeNeeded) }
+    try await sessions.completeTwoFactor(recoveryCode: "lo abc def oI")
+    XCTAssertNotNil(sessions.state.user, "O for 0 and I or L for 1, as the API normalises them")
   }
 }

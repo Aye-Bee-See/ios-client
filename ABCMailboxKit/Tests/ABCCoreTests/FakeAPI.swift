@@ -93,8 +93,13 @@ final class FakeAPI: @unchecked Sendable {
   /// A code from the app (once), or a recovery code (used up). Nil when it fits.
   private func proveFactor(_ id: Int, code: String?, recoveryCode: String?) -> Stubbed? {
     guard var t = twoFactor[id] else { return wrongCode("code") }
-    if let recovery = recoveryCode?.uppercased().filter({ $0.isLetter || $0.isNumber }), !recovery.isEmpty {
-      guard let i = t.recoveryCodes.firstIndex(where: { $0.filter { $0 != "-" } == recovery }) else { return wrongCode("recoveryCode") }
+    // As the API reads a typed code: any case, spaces or dashes, O as 0 and I or L as 1.
+    func folded(_ s: String) -> String {
+      String(s.uppercased().filter { $0.isLetter || $0.isNumber }.map { c -> Character in c == "O" ? "0" : (c == "I" || c == "L") ? "1" : c })
+    }
+    if let typed = recoveryCode, !folded(typed).isEmpty {
+      let recovery = folded(typed)
+      guard let i = t.recoveryCodes.firstIndex(where: { folded($0) == recovery }) else { return wrongCode("recoveryCode") }
       t.recoveryCodes.remove(at: i); twoFactor[id] = t
       return nil
     }
@@ -298,7 +303,8 @@ final class FakeAPI: @unchecked Sendable {
     if let answer = intercept?(r) { intercept = nil; return answer }
     let body = r.json
     // API #175: required and not set up, every request but setting it up is refused.
-    if let a = caller(r), twoFactorRequired[a.id] != nil, twoFactor[a.id]?.enabled != true, !Self.duringSetup.contains("\(r.method) \(r.path)") {
+    // Only where the session is checked: `/health` is public and never reads a token.
+    if r.path != "/health", let a = caller(r), twoFactorRequired[a.id] != nil, twoFactor[a.id]?.enabled != true, !Self.duringSetup.contains("\(r.method) \(r.path)") {
       return .error(403, info: "This account must use two-factor sign-in. Set it up first (POST /auth/two-factor/setup, then POST /auth/two-factor/confirm).", extra: ["name": "TwoFactorRequiredError", "code": "two_factor_required.setup_required", "condition": "setup_required"])
     }
     switch (r.method, r.path) {

@@ -34,13 +34,20 @@ public final class TwoFactorRepository {
   public func confirm(code: String) async throws -> [String] {
     let envelope: APIEnvelope<TwoFactorCodesDTO> = try await api.send("POST", "auth/two-factor/confirm", body: TwoFactorCodeRequest(code: TwoFactorCode.normalise(code)))
     // On now, and a requirement is met; the screen says so (`SessionRepository.twoFactorSetUp`) once the codes are saved.
-    return try envelope.required("two-factor confirmation").recoveryCodes ?? []
+    // The codes are the one way back in without the phone, and shown only now: an answer without them is not a success.
+    guard let codes = try envelope.required("two-factor confirmation").recoveryCodes, !codes.isEmpty else {
+      throw AppError.unexpected("Two-factor sign-in was switched on, but the server's answer had no recovery codes. Make new ones under Account, Two-factor sign-in.")
+    }
+    return codes
   }
 
   /// A fresh set of recovery codes; the old ones stop working. Takes a code from the app.
   public func newRecoveryCodes(code: String) async throws -> [String] {
     let envelope: APIEnvelope<TwoFactorCodesDTO> = try await api.send("POST", "auth/two-factor/recovery-codes", body: TwoFactorCodeRequest(code: TwoFactorCode.normalise(code)))
-    return try envelope.required("recovery codes").recoveryCodes ?? []
+    guard let codes = try envelope.required("recovery codes").recoveryCodes, !codes.isEmpty else {
+      throw AppError.unexpected("The server's answer had no recovery codes. Try again.")
+    }
+    return codes
   }
 
   /// Switches it off, with a code from the app or a recovery code. Refused (`409 required`) while it is required.

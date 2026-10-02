@@ -56,6 +56,14 @@ struct RootView: View {
       Task { await app.syncActivity() }
       Task { await app.checkPenName() }
     }
+    .onChange(of: app.sessions.twoFactorSetupRequired) { was, now in
+      // Set up at last: everything the sign-in tried while the server refused it runs now.
+      guard was, !now, app.user != nil else { return }
+      Task { await app.flushOutbox() }
+      Task { await app.setUpKeys() }
+      Task { await app.syncActivity() }
+      Task { await app.checkPenName() }
+    }
     .task { await app.setUpKeys() } // at launch, for someone already signed in
     .task { await app.checkPenName() }
   }

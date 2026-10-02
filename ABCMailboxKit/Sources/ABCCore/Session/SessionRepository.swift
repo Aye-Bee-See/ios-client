@@ -40,6 +40,10 @@ public final class SessionRepository {
   @ObservationIgnored var onSignedOut: [@MainActor () -> Void] = []
   /// What finishes a waiting sign-in. In memory only, never stored, and wiped when it is used, given up or expired.
   @ObservationIgnored private var waiting: Waiting?
+  /// Signed in while a required two-factor set-up is outstanding, with keys that need the server (made here, or
+  /// fetched in server mode): every such request is refused until the set-up, so they are prepared after it. The
+  /// password stays in memory only until then, and goes with a sign-out.
+  @ObservationIgnored private var keysAfterSetUp: (session: Session, password: String)?
   /// The claim check's key material, kept so claiming does not spend a second rate-limited check.
   @ObservationIgnored private var lastClaim: (token: String, info: ClaimInfoDTO)?
 
@@ -70,8 +74,22 @@ public final class SessionRepository {
     twoFactorSetupRequired = true
   }
 
-  /// Two-factor sign-in was just set up; everything else works again.
-  public func twoFactorSetUp() { twoFactorSetupRequired = false }
+  /// Two-factor sign-in is on (just set up here, or found on already), or no longer required: everything else works
+  /// again. Keys a sign-in could not prepare while the server refused everything are prepared now.
+  public func twoFactorSetUp() async {
+    twoFactorSetupRequired = false
+    guard let pending = keysAfterSetUp else { return }
+    keysAfterSetUp = nil
+    guard pending.session.user.id == state.user?.id else { return }
+    let cred: Credential
+    do {
+      cred = pending.session.olderAccount ? .plain(pending.password) : try await credential(username: pending.session.user.username, password: pending.password)
+    } catch {
+      return // locked; the inbox offers to unlock, or to sign in again
+    }
+    defer { cred.wipe() }
+    await prepareKeys(pending.session, bundle: nil, password: pending.password, cred: cred)
+  }
 
   private func tokenRefused(_ refused: String) {
     // An old report must never sign out a newer session.
@@ -92,6 +110,7 @@ public final class SessionRepository {
     vault.clear()
     pendingRecoveryCode = nil
     twoFactorSetupRequired = false
+    keysAfterSetUp = nil
     state = .signedOut
     onSignedOut.forEach { $0() }
   }
@@ -207,7 +226,12 @@ public final class SessionRepository {
     twoFactorSetupRequired = response.twoFactor?.setupRequired == true
     if cred.isSplit { schemes.rememberSplit(name) }
     _ = await modes.current()
-    await prepareKeys(session, bundle: response.keys, password: password, cred: cred)
+    // Keys already in the sign-in answer open here, with no request; anything that needs the server waits for the set-up.
+    if twoFactorSetupRequired, session.user.role != Role.admin, response.keys?.material == nil {
+      keysAfterSetUp = (session, password)
+    } else {
+      await prepareKeys(session, bundle: response.keys, password: password, cred: cred)
+    }
     return session
   }
 
