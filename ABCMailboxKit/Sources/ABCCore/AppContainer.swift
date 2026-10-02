@@ -20,6 +20,7 @@ public final class AppContainer {
   public let activity: ActivityRepository
   public let accountDeletion: AccountDeletion
   public let penNames: PenNameRepository
+  public let twoFactor: TwoFactorRepository
   public let files: LocalFiles
   public let devServer: DevServerRepository
 
@@ -71,6 +72,7 @@ public final class AppContainer {
     activity.onGroupKeyChange = { [groupRepo] in await groupRepo.refreshKeyState() }
     accountDeletion = AccountDeletion(sessions: sessions, modes: modes, letters: letters, group: group, drafts: drafts, outbox: outbox, activity: activity)
     penNames = PenNameRepository(api: api, sessions: sessions)
+    twoFactor = TwoFactorRepository(api: api, sessions: sessions)
     devServer = DevServerRepository(defaults: defaults, holder: holder, sessions: sessions, modes: modes)
   }
 }

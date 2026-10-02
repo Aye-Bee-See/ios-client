@@ -22,6 +22,12 @@ struct RootView: View {
           .transition(.opacity)
           .zIndex(1)
       }
+      // Two-factor sign-in is required and not set up (API #175): nothing else works until it is, so it covers the tabs.
+      if app.sessions.twoFactorSetupRequired, app.user != nil {
+        TwoFactorRequiredView(app: app)
+          .transition(.opacity)
+          .zIndex(1.5)
+      }
       // A recovery code was just created (first sign-in on an end-to-end server, or a claim):
       // it takes over the screen until the writer confirms they saved it.
       if let code = app.sessions.pendingRecoveryCode {
@@ -32,6 +38,7 @@ struct RootView: View {
     }
     .animation(.default, value: app.sessions.pendingRecoveryCode)
     .animation(.default, value: app.needsPenName)
+    .animation(.default, value: app.sessions.twoFactorSetupRequired)
     .fullScreenCover(isPresented: $app.authPresented) { AuthFlowView() .environment(app).tint(Theme.red) }
     .task { await app.container.modes.refresh() } // Ask the server which letter contract it speaks, once per launch.
     // Keep the offline copy of the directory fresh: at most one quiet download a day, and only if the server answers.
@@ -44,6 +51,14 @@ struct RootView: View {
       // Signing in from signed-out changes nothing that was private; every other change does.
       if old != nil, old != new { app.closeEverything() }
       // Letters belong to the account that wrote them: show this account's, and send them now that someone is signed in.
+      Task { await app.flushOutbox() }
+      Task { await app.setUpKeys() }
+      Task { await app.syncActivity() }
+      Task { await app.checkPenName() }
+    }
+    .onChange(of: app.sessions.twoFactorSetupRequired) { was, now in
+      // Set up at last: everything the sign-in tried while the server refused it runs now.
+      guard was, !now, app.user != nil else { return }
       Task { await app.flushOutbox() }
       Task { await app.setUpKeys() }
       Task { await app.syncActivity() }
@@ -125,6 +140,7 @@ struct RouteView: View {
     case .prisonerPhoto(let id, let name, let hasPhoto, let credit): PrisonerPhotoEditView(app: app, prisonerId: id, name: name, hasPhoto: hasPhoto, credit: credit)
     case .changePassword: ChangePasswordView(app: app)
     case .penName: PenNameView(app: app)
+    case .twoFactor: TwoFactorSettingsView(app: app)
     case .deleteAccount: DeleteAccountView(app: app)
     }
   }

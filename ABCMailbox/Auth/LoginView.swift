@@ -16,6 +16,7 @@ struct AuthFlowView: View {
           case .join(let code): JoinView(app: app, code: code)
           case .invitation(let token): InvitationView(app: app, token: token)
           case .recover: RecoverView(app: app)
+          case .twoFactor(let afterRecovery): TwoFactorCodeView(app: app, afterRecovery: afterRecovery)
           }
         }
     }
@@ -51,6 +52,10 @@ final class LoginModel {
       try await app.sessions.login(username: username, password: password, olderAccount: olderAccount)
       password = ""; olderAccount = false
       app.authFinished()
+    } catch AppError.twoFactorCodeNeeded {
+      // The password was right; a code finishes it. Typed again if the person goes back.
+      password = ""
+      app.authPath.append(.twoFactor(afterRecovery: false))
     } catch {
       self.error = Self.message(.from(error))
     }

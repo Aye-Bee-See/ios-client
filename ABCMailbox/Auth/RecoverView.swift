@@ -31,6 +31,10 @@ final class RecoverModel {
       try await app.sessions.recover(username: username, recoveryCode: code, newPassword: password)
       password = ""; confirm = ""; code = ""
       app.authFinished(toast: "Password changed. You are signed in.", goToInbox: true)
+    } catch AppError.twoFactorCodeNeeded {
+      // The password is changed; with two-factor sign-in on, a code finishes signing in.
+      password = ""; confirm = ""; code = ""
+      app.authPath.append(.twoFactor(afterRecovery: true))
     } catch {
       switch AppError.from(error) {
       case .notFound: self.error = "No account with that username has a recovery code."

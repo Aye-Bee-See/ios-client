@@ -36,6 +36,8 @@ enum Route: Hashable {
   case changePassword
   /// A writer's pen name, and the limits on changing it (API #127).
   case penName
+  /// Two-factor sign-in on one's own account (API #173, #175).
+  case twoFactor
   case deleteAccount
 }
 
@@ -66,6 +68,9 @@ enum AuthRoute: Hashable {
   /// An invitation to be a group admin: to join a group, or to found one. Reached from the invite code box.
   case invitation(token: String?)
   case recover
+  /// Two-factor sign-in (API #173): the password was right, and a code finishes it. `afterRecovery`: the password
+  /// was just changed with the recovery code.
+  case twoFactor(afterRecovery: Bool)
 }
 
 struct Toast: Equatable, Identifiable {

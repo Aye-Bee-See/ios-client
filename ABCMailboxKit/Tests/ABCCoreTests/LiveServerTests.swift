@@ -88,7 +88,7 @@ final class LiveServerTests: XCTestCase {
     }
     var bundle = login.data?.keys
     if bundle == nil {
-      cache.token = login.data?.token.token
+      cache.token = login.data?.token?.token
       bundle = (try? await peek.get("auth/keys") as APIEnvelope<KeyBundleDTO>)?.data
       try? await peek.send("POST", "auth/logout", body: LogoutRequest(everywhere: false))
     }

@@ -102,6 +102,7 @@ struct AccountView: View {
       Button("Blocked writers") { app.push(.blockedWriters) }.buttonStyle(.link)
     }
     Button("Change password") { app.push(.changePassword) }.buttonStyle(.link)
+    Button("Two-factor sign-in") { app.push(.twoFactor) }.buttonStyle(.link).accessibilityIdentifier("two-factor-settings")
     Button("Sign out") { Task { await model.signOut(everywhere: false) } }.buttonStyle(.outlineWide).disabled(model.signingOut)
     Button("Sign out on every device") { Task { await model.signOut(everywhere: true) } }.buttonStyle(.link).disabled(model.signingOut)
   }
