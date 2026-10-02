@@ -30,10 +30,56 @@ struct TokenDTO: Decodable {
 }
 
 struct LoginData: Decodable {
-  let user: UserDTO
-  let token: TokenDTO
+  /// Absent when the account uses two-factor sign-in: then the answer is only `twoFactor.challenge`.
+  let user: UserDTO?
+  let token: TokenDTO?
   /// End-to-end mode only. An account with no keys yet gets an object of nulls.
   let keys: KeyBundleDTO?
+  var twoFactor: TwoFactorLoginDTO? = nil
+}
+
+/// What a sign-in says about two-factor sign-in (API #173, #175). Either the password was right and a code is
+/// needed next (`challenge`, good until `expiresAt`, no session yet), or the account is signed in but must set it
+/// up before anything else works (`setupRequired`, and `because`: `superadmins`, `all_groups`, `group`).
+struct TwoFactorLoginDTO: Decodable {
+  let challenge: String?
+  let expiresAt: String?
+  let setupRequired: Bool?
+  let because: [String]?
+}
+
+/// `POST /auth/login/two-factor`: the challenge and either a code from the app or a recovery code.
+struct TwoFactorLoginRequest: Encodable {
+  let challenge: String
+  let code: String?
+  let recoveryCode: String?
+}
+
+/// `GET /auth/two-factor`.
+struct TwoFactorStatusDTO: Decodable {
+  let enabled: Bool?
+  let enabledAt: String?
+  let settingUp: Bool?
+  let recoveryCodesLeft: Int?
+  let required: Bool?
+  let requiredBecause: [String]?
+}
+
+/// `POST /auth/two-factor/setup`.
+struct TwoFactorSetupDTO: Decodable {
+  let secret: String?
+  let otpauthUri: String?
+}
+
+/// `POST /auth/two-factor/confirm` and `POST /auth/two-factor/recovery-codes`: the recovery codes, shown once.
+struct TwoFactorCodesDTO: Decodable {
+  let recoveryCodes: [String]?
+}
+
+/// A code from the app, or a recovery code, for changing the setting.
+struct TwoFactorCodeRequest: Encodable {
+  let code: String?
+  var recoveryCode: String? = nil
 }
 
 /// The user record as the API returns it. Wrapped keys and passwords never appear.

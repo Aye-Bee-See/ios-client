@@ -54,8 +54,10 @@ public enum Role {
 }
 
 extension LoginData {
-  func toSession() -> Session {
-    Session(
+  /// A finished sign-in. An answer that only asks for a code has no session in it; the caller checks first.
+  func toSession() throws -> Session {
+    guard let token, let user else { throw AppError.unreadable("The sign-in answer had no session.") }
+    return Session(
       token: token.token,
       expiresAtMillis: token.expires,
       user: SessionUser(id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, chapterId: user.chapterId, sponsoredBy: user.sponsoredBy)

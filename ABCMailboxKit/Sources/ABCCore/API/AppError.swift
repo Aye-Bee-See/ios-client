@@ -39,6 +39,12 @@ public enum AppError: Error, Equatable, Sendable {
   /// `403 group_block` (API #171): the group that would mail this letter has blocked the writer. The letter was not
   /// sent; another relay group of the facility, if there is one, still takes it.
   case groupBlock(String?)
+  /// The password was right and the account uses two-factor sign-in (API #173): no session yet. `SessionRepository`
+  /// holds the challenge (`twoFactorChallenge`); the sign-in screen asks for a code next.
+  case twoFactorCodeNeeded
+  /// `403 two_factor_required.setup_required` (API #175): two-factor sign-in is required for this account and is
+  /// not set up, so nothing but setting it up works. The app shows the set-up screen over everything.
+  case twoFactorSetupRequired
 
   /// The sentence to show a person, when one exists.
   public var userMessage: String? {
@@ -55,6 +61,8 @@ public enum AppError: Error, Equatable, Sendable {
     case .network, .unreadable, .unexpected: return nil
     // The API's sentence names its own field ("choose it as relayChapter"): the app says it in its own words.
     case .groupBlock: return "The group that mails to this facility is not mailing letters from your account."
+    case .twoFactorCodeNeeded: return "Your password was right. Now type the six-digit code your authenticator app shows for this account."
+    case .twoFactorSetupRequired: return "Two-factor sign-in is required for your account. Set it up to go on; nothing else works until you do."
     case .wrongEncryptionMode: return "This version of the app cannot send letters to this server, which protects them in a way the app does not know. Update the app, then send the letter again."
     }
   }

@@ -27,7 +27,7 @@ public final class APIClient: Sendable {
   /// worse, their 401 ("wrong password") would be mistaken for "your session was
   /// revoked": checking the current password before a password change would sign
   /// the user out on a typo.
-  private static let publicAuthPaths = ["auth/login", "auth/login-params", "auth/claim", "auth/recover", "auth/join", "invitation/accept"]
+  private static let publicAuthPaths = ["auth/login", "auth/login/two-factor", "auth/login-params", "auth/claim", "auth/recover", "auth/join", "invitation/accept"]
 
   public init(baseURL: DevServerURL, cache: SessionCache, configuration: URLSessionConfiguration = .ephemeral) {
     configuration.timeoutIntervalForRequest = 30
@@ -127,7 +127,12 @@ public final class APIClient: Sendable {
       if http.statusCode == 401, let sent = request.value(forHTTPHeaderField: "Authorization")?.dropFirst("Bearer ".count) {
         cache.reportUnauthorized(String(sent))
       }
-      throw Self.error(status: http.statusCode, body: data, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+      let error = Self.error(status: http.statusCode, body: data, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+      // Required and not set up: possibly mid-session, when a superadmin made it required meanwhile.
+      if error == .twoFactorSetupRequired, let sent = request.value(forHTTPHeaderField: "Authorization")?.dropFirst("Bearer ".count) {
+        cache.reportTwoFactorSetupRequired(String(sent))
+      }
+      throw error
     }
     return data
   }
@@ -162,6 +167,7 @@ public final class APIClient: Sendable {
     case 401: return .unauthorized(info)
     case 403:
       if envelope?.code == "group_block" { return .groupBlock(envelope?.error ?? info) }
+      if envelope?.code == "two_factor_required.setup_required" { return .twoFactorSetupRequired }
       return .forbidden(info ?? "You are not allowed to do that.")
     // Like a 409, a 404 may carry the useful sentence in `error` ("Message 99999 not found") under a general `info`.
     case 404: return .notFound(envelope?.error ?? info)

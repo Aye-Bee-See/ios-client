@@ -78,6 +78,35 @@ final class FakeAPI: @unchecked Sendable {
   private func lacksPenName(_ body: [String: Any]) -> Bool { requirePenName && ((body["penName"] as? String)?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) }
   /// API #171: writers each group blocked, by group id → writer id → reason. #172: recommendations.
   var blocks: [Int: [Int: String]] = [:]
+  /// Two-factor sign-in (API #173), by account id. The fake's authenticator shows `currentCode`; a code works once.
+  var twoFactor: [Int: (enabled: Bool, pending: Bool, lastCode: String?, recoveryCodes: [String])] = [:]
+  var currentCode = "123456"
+  /// Sign-ins waiting for their code: challenge → account, and whether it was used or has run out.
+  var loginChallenges: [String: (user: Int, spent: Bool)] = [:]
+  /// API #175: accounts it is required for, with why (`superadmins`, `all_groups`, `group`).
+  var twoFactorRequired: [Int: [String]] = [:]
+  private static let duringSetup: Set<String> = ["GET /auth/two-factor", "POST /auth/two-factor/setup", "POST /auth/two-factor/confirm", "POST /auth/logout"]
+  private func wrongCode(_ field: String) -> Stubbed {
+    let sentence = field == "recoveryCode" ? "That recovery code is not one of this account's, or was used already." : "That code is not right. Check the time on your phone, and use the newest code."
+    return .error(400, extra: ["name": "ValidationError", "errors": [sentence], "problems": [["field": field, "code": "not_eligible"]]])
+  }
+  /// A code from the app (once), or a recovery code (used up). Nil when it fits.
+  private func proveFactor(_ id: Int, code: String?, recoveryCode: String?) -> Stubbed? {
+    guard var t = twoFactor[id] else { return wrongCode("code") }
+    if let recovery = recoveryCode?.uppercased().filter({ $0.isLetter || $0.isNumber }), !recovery.isEmpty {
+      guard let i = t.recoveryCodes.firstIndex(where: { $0.filter { $0 != "-" } == recovery }) else { return wrongCode("recoveryCode") }
+      t.recoveryCodes.remove(at: i); twoFactor[id] = t
+      return nil
+    }
+    guard let code, !code.isEmpty else { return .error(400, extra: ["errors": ["Send a code from your authenticator app (code), or a recovery code (recoveryCode)."], "problems": [["field": "code", "code": "required"]]]) }
+    guard code == currentCode, t.lastCode != code else { return wrongCode("code") }
+    t.lastCode = code; twoFactor[id] = t
+    return nil
+  }
+  private func freshRecoveryCodes() -> [String] {
+    let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+    return (0..<10).map { _ in String((0..<5).map { _ in alphabet.randomElement()! }) + "-" + String((0..<5).map { _ in alphabet.randomElement()! }) }
+  }
   var banRecommendations: [[String: Any]] = []
   static let groupFields = ["name", "location", "subregion", "country", "about", "website", "email", "socialLinks", "services", "announcement", "networkRole"]
   /// What `GET /auth/pen-name` answers beside the name (API #127), and the refusal a pen name change meets, if any.
@@ -268,6 +297,10 @@ final class FakeAPI: @unchecked Sendable {
   private func route(_ r: Recorded) -> Stubbed {
     if let answer = intercept?(r) { intercept = nil; return answer }
     let body = r.json
+    // API #175: required and not set up, every request but setting it up is refused.
+    if let a = caller(r), twoFactorRequired[a.id] != nil, twoFactor[a.id]?.enabled != true, !Self.duringSetup.contains("\(r.method) \(r.path)") {
+      return .error(403, info: "This account must use two-factor sign-in. Set it up first (POST /auth/two-factor/setup, then POST /auth/two-factor/confirm).", extra: ["name": "TwoFactorRequiredError", "code": "two_factor_required.setup_required", "condition": "setup_required"])
+    }
     switch (r.method, r.path) {
     case ("GET", "/health"):
       return .json(["status": "ok", "encryptionMode": mode])
@@ -396,9 +429,62 @@ final class FakeAPI: @unchecked Sendable {
 
     case ("POST", "/auth/login"):
       guard let a = accounts.first(where: { $0.username == body["username"] as? String && $0.password == body["password"] as? String }) else { return .error(401, info: "Incorrect username or password.") }
+      if twoFactor[a.id]?.enabled == true {
+        let challenge = "challenge-\(a.id)-\(id())"
+        loginChallenges[challenge] = (a.id, false)
+        return .data(["twoFactor": ["challenge": challenge, "expiresAt": "2099-01-01T00:00:00.000Z"]])
+      }
+      var data: [String: Any] = ["user": userJSON(a), "token": issue(a)]
+      if mode == "e2e" { data["keys"] = bundle(a) }
+      if let because = twoFactorRequired[a.id] { data["twoFactor"] = ["setupRequired": true, "because": because] }
+      return .data(data)
+
+    case ("POST", "/auth/login/two-factor"):
+      let expired = Stubbed.error(401, info: "That sign-in has expired or was already used. Sign in again with your password.", extra: ["name": "AuthenticationError", "condition": "challenge_expired"])
+      guard let challenge = body["challenge"] as? String, let waiting = loginChallenges[challenge], !waiting.spent, let a = accounts.first(where: { $0.id == waiting.user }) else { return expired }
+      if let refused = proveFactor(a.id, code: body["code"] as? String, recoveryCode: body["recoveryCode"] as? String) { return refused }
+      loginChallenges[challenge] = (a.id, true)
       var data: [String: Any] = ["user": userJSON(a), "token": issue(a)]
       if mode == "e2e" { data["keys"] = bundle(a) }
       return .data(data)
+
+    case ("GET", "/auth/two-factor"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      let t = twoFactor[a.id]
+      let on = t?.enabled == true
+      return .data(["enabled": on, "enabledAt": on ? "2026-10-01T12:00:00.000Z" : NSNull(), "settingUp": !on && t?.pending == true,
+                    "recoveryCodesLeft": on ? t!.recoveryCodes.count : 0, "required": twoFactorRequired[a.id] != nil, "requiredBecause": twoFactorRequired[a.id] ?? []])
+
+    case ("POST", "/auth/two-factor/setup"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      if twoFactor[a.id]?.enabled == true { return .error(409, info: "Two-factor sign-in is on already. Switch it off first to move it to another phone.", extra: ["name": "TwoFactorError", "condition": "enabled"]) }
+      twoFactor[a.id] = (false, true, nil, [])
+      return .data(["secret": "JBSWY3DPEHPK3PXP", "otpauthUri": "otpauth://totp/letters.support:\(a.username)?secret=JBSWY3DPEHPK3PXP&issuer=letters.support"])
+
+    case ("POST", "/auth/two-factor/confirm"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      if twoFactor[a.id]?.enabled == true { return .error(409, info: "Two-factor sign-in is on already.", extra: ["name": "TwoFactorError", "condition": "enabled"]) }
+      guard twoFactor[a.id]?.pending == true else { return .error(400, extra: ["errors": ["Start with POST /auth/two-factor/setup."], "problems": [["field": "code", "code": "not_eligible"]]]) }
+      guard body["code"] as? String == currentCode else { return wrongCode("code") }
+      let codes = freshRecoveryCodes()
+      twoFactor[a.id] = (true, false, currentCode, codes)
+      return .data(["enabled": true, "enabledAt": "2026-10-01T12:00:00.000Z", "recoveryCodes": codes])
+
+    case ("POST", "/auth/two-factor/recovery-codes"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      guard twoFactor[a.id]?.enabled == true else { return .error(409, info: "Two-factor sign-in is not on.", extra: ["name": "TwoFactorError", "condition": "not_enabled"]) }
+      if let refused = proveFactor(a.id, code: body["code"] as? String, recoveryCode: nil) { return refused }
+      let codes = freshRecoveryCodes()
+      twoFactor[a.id]?.recoveryCodes = codes
+      return .data(["recoveryCodes": codes])
+
+    case ("DELETE", "/auth/two-factor"):
+      guard let a = caller(r) else { return .error(401, info: "Sign in.") }
+      guard twoFactor[a.id]?.enabled == true else { return .error(409, info: "Two-factor sign-in is not on.", extra: ["name": "TwoFactorError", "condition": "not_enabled"]) }
+      if twoFactorRequired[a.id] != nil { return .error(409, info: "Two-factor sign-in is required for this account, so it cannot be switched off. A superadmin can reset it for a lost phone.", extra: ["name": "TwoFactorError", "condition": "required"]) }
+      if let refused = proveFactor(a.id, code: body["code"] as? String, recoveryCode: body["recoveryCode"] as? String) { return refused }
+      twoFactor[a.id] = nil
+      return .data(["enabled": false])
 
     case ("POST", "/auth/logout"):
       if let header = r.headers["Authorization"] { tokens[String(header.dropFirst("Bearer ".count))] = nil }

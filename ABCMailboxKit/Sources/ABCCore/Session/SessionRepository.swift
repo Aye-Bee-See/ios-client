@@ -15,6 +15,14 @@ public final class SessionRepository {
   /// Goes up by one each time the server ends the session (revoked, expired, banned), so the UI can say so once.
   public private(set) var expiredCount = 0
 
+  /// A sign-in waiting for its second step (API #173): the password was right, and a code from the authenticator
+  /// app, or a recovery code, finishes it. Nil when nothing waits.
+  public private(set) var twoFactorChallenge: TwoFactorChallenge?
+
+  /// Two-factor sign-in is required for the signed-in account and not set up yet (API #175): until it is, the
+  /// server refuses everything else, so the app shows the set-up screen over everything.
+  public private(set) var twoFactorSetupRequired = false
+
   /// True when signed in to an end-to-end server without the private key on this device.
   public var keysLocked: Bool {
     guard let user = state.user else { return false }
@@ -30,6 +38,8 @@ public final class SessionRepository {
   @ObservationIgnored private let schemes: SchemeMemory
   /// Whoever else holds secrets for the signed-in account (the group keyring) clears them here.
   @ObservationIgnored var onSignedOut: [@MainActor () -> Void] = []
+  /// What finishes a waiting sign-in. In memory only, never stored, and wiped when it is used, given up or expired.
+  @ObservationIgnored private var waiting: Waiting?
   /// The claim check's key material, kept so claiming does not spend a second rate-limited check.
   @ObservationIgnored private var lastClaim: (token: String, info: ClaimInfoDTO)?
 
@@ -49,7 +59,19 @@ public final class SessionRepository {
     cache.onUnauthorized = { [weak self] refused in
       Task { @MainActor in self?.tokenRefused(refused) }
     }
+    cache.onTwoFactorSetupRequired = { [weak self] token in
+      Task { @MainActor in self?.setupRequiredReported(token) }
+    }
   }
+
+  private func setupRequiredReported(_ token: String) {
+    // About this session only: a report about an older token says nothing about the account signed in now.
+    guard token == cache.token, state.user != nil else { return }
+    twoFactorSetupRequired = true
+  }
+
+  /// Two-factor sign-in was just set up; everything else works again.
+  public func twoFactorSetUp() { twoFactorSetupRequired = false }
 
   private func tokenRefused(_ refused: String) {
     // An old report must never sign out a newer session.
@@ -69,6 +91,7 @@ public final class SessionRepository {
     store.clear()
     vault.clear()
     pendingRecoveryCode = nil
+    twoFactorSetupRequired = false
     state = .signedOut
     onSignedOut.forEach { $0() }
   }
@@ -156,19 +179,84 @@ public final class SessionRepository {
   /// scheme on a server that now calls every name split. Not a feature, an escape hatch: the app never sends
   /// the password on its own.
   @discardableResult
+  ///
+  /// With two-factor sign-in on, the right password is not enough: this throws `AppError.twoFactorCodeNeeded`
+  /// and keeps the sign-in waiting (`twoFactorChallenge`), and `completeTwoFactor` finishes it.
   public func login(username: String, password: String, olderAccount: Bool = false) async throws -> Session {
     let name = username.trimmed
     let (response, cred) = try await signIn(name, password: password, olderAccount: olderAccount)
+    if response.token == nil, let challenge = response.twoFactor?.challenge {
+      // A newer sign-in replaces any older one still waiting.
+      cancelTwoFactor()
+      let expiresAt = response.twoFactor?.expiresAt.instant
+      waiting = Waiting(challenge: challenge, username: name, password: password, cred: cred, olderAccount: olderAccount)
+      twoFactorChallenge = TwoFactorChallenge(username: name, expiresAt: expiresAt)
+      throw AppError.twoFactorCodeNeeded
+    }
     defer { cred.wipe() }
-    var session = response.toSession()
+    return try await finishSignIn(response, name: name, password: password, cred: cred, olderAccount: olderAccount)
+  }
+
+  /// What both sign-ins end with: the session adopted and the keys opened (or made).
+  private func finishSignIn(_ response: LoginData, name: String, password: String, cred: Credential, olderAccount: Bool) async throws -> Session {
+    var session = try response.toSession()
     session.olderAccount = olderAccount
     // A different account signing in over a live one must not inherit its keys.
     if let current = state.user, current.id != session.user.id { forgetLocally() }
     adopt(session)
+    twoFactorSetupRequired = response.twoFactor?.setupRequired == true
     if cred.isSplit { schemes.rememberSplit(name) }
     _ = await modes.current()
     await prepareKeys(session, bundle: response.keys, password: password, cred: cred)
     return session
+  }
+
+  // MARK: - Two-factor sign-in (API #173)
+
+  private struct Waiting {
+    let id = UUID()
+    let challenge: String
+    let username: String
+    /// Kept to open the private key once the code is right, as a one-step sign-in opens it with the password.
+    let password: String
+    let cred: Credential
+    let olderAccount: Bool
+  }
+
+  static let challengeExpired = AppError.unauthorized("That took too long. Enter your password again.")
+
+  /// The second step: a code from the authenticator app, or one of the recovery codes. A wrong code is a `400` and
+  /// the sign-in keeps waiting for another try. One that has expired or was used is given up here and thrown as
+  /// `challengeExpired`: the person types the password again, and the screen never sends the old challenge twice.
+  @discardableResult
+  public func completeTwoFactor(code: String? = nil, recoveryCode: String? = nil) async throws -> Session {
+    guard let w = waiting else { throw Self.challengeExpired }
+    if let expiresAt = twoFactorChallenge?.expiresAt, expiresAt <= Date() {
+      cancelTwoFactor()
+      throw Self.challengeExpired
+    }
+    let response: LoginData
+    do {
+      let body = TwoFactorLoginRequest(challenge: w.challenge, code: code.map(TwoFactorCode.normalise), recoveryCode: recoveryCode?.trimmed)
+      let envelope: APIEnvelope<LoginData> = try await api.send("POST", "auth/login/two-factor", body: body)
+      response = try envelope.required("sign-in response")
+    } catch let e as AppError where e.isUnauthorized {
+      if waiting?.id == w.id { cancelTwoFactor() }
+      throw Self.challengeExpired
+    }
+    // Given up (or replaced by a newer sign-in) while the code was on its way: that sign-in is over.
+    guard waiting?.id == w.id else { throw Self.challengeExpired }
+    waiting = nil
+    twoFactorChallenge = nil
+    defer { w.cred.wipe() }
+    return try await finishSignIn(response, name: w.username, password: w.password, cred: w.cred, olderAccount: w.olderAccount)
+  }
+
+  /// Forgets a waiting sign-in: back to the password.
+  public func cancelTwoFactor() {
+    waiting?.cred.wipe()
+    waiting = nil
+    twoFactorChallenge = nil
   }
 
   /// Right after signing in, in either mode (API PR #95). Keys can only be made at sign-in: the
@@ -449,6 +537,7 @@ public final class SessionRepository {
       finish = RecoverFinishRequest(username: name, challenge: challenge, password: newPassword, wrappedPrivateKey: w.wrapped, kdfSalt: w.salt, kdfParams: w.params)
     }
     try await api.send("POST", "auth/recover", body: finish)
+    // With two-factor sign-in on, this throws `twoFactorCodeNeeded`: the password is changed, and a code finishes signing in.
     return try await login(username: name, password: newPassword)
   }
 

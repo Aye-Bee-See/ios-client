@@ -22,4 +22,14 @@ public final class SessionCache: @unchecked Sendable {
   }
 
   func reportUnauthorized(_ refusedToken: String) { onUnauthorized?(refusedToken) }
+
+  private var _onTwoFactorSetupRequired: (@Sendable (String) -> Void)?
+
+  /// Called with the token that was told to set up two-factor sign-in first (API #175).
+  var onTwoFactorSetupRequired: (@Sendable (String) -> Void)? {
+    get { lock.withLock { _onTwoFactorSetupRequired } }
+    set { lock.withLock { _onTwoFactorSetupRequired = newValue } }
+  }
+
+  func reportTwoFactorSetupRequired(_ token: String) { onTwoFactorSetupRequired?(token) }
 }
